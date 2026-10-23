@@ -1335,7 +1335,12 @@ function narrativeBlocks(story: Narrative) {
     return blocks;
 }
 
-/** Whether a path fits a pattern of the report: a path, a folder prefix, or a glob with `*`. */
+/**
+ * Whether a path fits a pattern of the report: a path, a folder prefix, or a glob (`*` is any text in one folder
+ * name, `**` is any text). A glob without a closing `/` also fits everything below a match. The pattern comes
+ * from Pi, so this never builds a regular expression from it: that could take minutes to answer. It follows the
+ * pattern's states along the path once, so its time is the pattern's length times the path's.
+ */
 function fits(pattern: string, path: string) {
     const p = pattern.trim().replace(/^\.\//, "");
 
@@ -1343,21 +1348,58 @@ function fits(pattern: string, path: string) {
         return !path.includes("/");
     }
 
-    if (p.includes("*")) {
-        const source = p
-            .split("**")
-            .map((part) =>
-                part
-                    .split("*")
-                    .map((bit) => bit.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-                    .join("[^/]*"),
-            )
-            .join(".*");
-
-        return new RegExp(`^${source}${p.endsWith("/") ? "" : "(/.*)?"}$`).test(path);
+    if (p.length > 500) {
+        return false;
     }
 
-    return p.endsWith("/") ? path.startsWith(p) : path === p || path.startsWith(`${p}/`);
+    if (!p.includes("*")) {
+        return p.endsWith("/") ? path.startsWith(p) : path === p || path.startsWith(`${p}/`);
+    }
+
+    // A run of stars is one star, or two when it holds two or more (the same as the old pattern).
+    const tokens: ("*" | "**" | string)[] = [];
+
+    for (const match of p.matchAll(/\*+|[^*]/g)) {
+        tokens.push(match[0].length > 1 ? "**" : match[0]);
+    }
+
+    const open = (states: Set<number>, from: number) => {
+        let at = from;
+
+        states.add(at);
+
+        while (tokens[at] === "*" || tokens[at] === "**") {
+            states.add(++at);
+        }
+    };
+    const below = !p.endsWith("/");
+    const accepted = (states: Set<number>, at: number) =>
+        states.has(tokens.length) && (at === path.length || (below && path[at] === "/"));
+    let states = new Set<number>();
+
+    open(states, 0);
+
+    for (let at = 0; at < path.length; at++) {
+        if (accepted(states, at)) {
+            return true;
+        }
+
+        const next = new Set<number>();
+
+        for (const state of states) {
+            const token = tokens[state];
+
+            if (token === "**" || (token === "*" && path[at] !== "/")) {
+                open(next, state);
+            } else if (token === path[at]) {
+                open(next, state + 1);
+            }
+        }
+
+        states = next;
+    }
+
+    return accepted(states, path.length);
 }
 
 function safeJson(value: unknown) {

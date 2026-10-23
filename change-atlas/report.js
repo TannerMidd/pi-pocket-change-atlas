@@ -211,6 +211,57 @@
 
     // ── Matching files ──────────────────────────────────────────────────
 
+    // A glob: `*` is any text in one folder name, `**` is any text. Without a closing `/` it also fits what is below
+    // a match. The pattern comes from Pi, so this builds no regular expression from it (that could take minutes):
+    // it follows the pattern's states along the path once.
+    function globber(p) {
+        if (p.length > 500) {
+            return () => false;
+        }
+
+        const tokens = [...p.matchAll(/\*+|[^*]/g)].map((m) => (m[0].length > 1 ? "**" : m[0]));
+        const below = !p.endsWith("/");
+        const open = (states, from) => {
+            let at = from;
+
+            states.add(at);
+
+            while (tokens[at] === "*" || tokens[at] === "**") {
+                states.add(++at);
+            }
+        };
+
+        return (path) => {
+            const accepted = (states, at) =>
+                states.has(tokens.length) && (at === path.length || (below && path[at] === "/"));
+            let states = new Set();
+
+            open(states, 0);
+
+            for (let at = 0; at < path.length; at++) {
+                if (accepted(states, at)) {
+                    return true;
+                }
+
+                const next = new Set();
+
+                for (const state of states) {
+                    const token = tokens[state];
+
+                    if (token === "**" || (token === "*" && path[at] !== "/")) {
+                        open(next, state);
+                    } else if (token === path[at]) {
+                        open(next, state + 1);
+                    }
+                }
+
+                states = next;
+            }
+
+            return accepted(states, path.length);
+        };
+    }
+
     // A pattern gives a score for a path: 0 for no match, else how specific the pattern is.
     function matcher(pattern) {
         const p = String(pattern).trim().replace(/^\.\//, "");
@@ -221,19 +272,9 @@
         }
 
         if (p.includes("*")) {
-            const source = p
-                .split("**")
-                .map((part) =>
-                    part
-                        .split("*")
-                        .map((bit) => bit.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-                        .join("[^/]*"),
-                )
-                .join(".*");
+            const glob = globber(p);
 
-            const re = new RegExp("^" + source + (p.endsWith("/") ? "" : "(/.*)?") + "$");
-
-            return (path) => (re.test(path) ? score : 0);
+            return (path) => (glob(path) ? score : 0);
         }
 
         if (p.endsWith("/")) {
