@@ -61,7 +61,10 @@ A target is one of these:
   Guard does not see them, so give a session access to the tools only if you trust it with every
   repository on the machine.
 - Working tree files that Git does not know yet, when the target is the local changes (up to 200 KB
-  each, regular files only: a symbolic link is never followed). Files that `.gitignore` names are not
+  each, regular files only: a symbolic link is never followed, in any folder of the path). The file that
+  was opened is checked, not only its path, so a link put in during the read does not help. On Linux
+  this check uses `/proc/self/fd`. On macOS and Windows it uses the real path and the file's identity
+  after the open, and a link that is put in and taken out again very fast could still get through. Files that `.gitignore` names are not
   read.
 - Its own files, `change-atlas/report.js` and `change-atlas/report.css`, to build the page.
 

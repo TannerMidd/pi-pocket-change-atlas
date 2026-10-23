@@ -12,7 +12,16 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
-import { chmod, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+    chmod,
+    lstat,
+    mkdir,
+    open,
+    readFile,
+    readlink,
+    realpath,
+    writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "@earendil-works/pi-ai";
@@ -979,19 +988,33 @@ function autoArchitecture(files: FileChange[]) {
  * symbolic link is never followed, in the last part of the path or in any folder of it: a link can point to any file
  * on the machine, and its text would go into the report and to Pi. `size` is the real size; `buffer` is there only
  * when the file is no larger than `max`.
+ *
+ * The folder is checked first, but a folder can become a link between that check and the open. So the file that was
+ * opened is checked as well: on Linux, where `/proc/self/fd` names it, and everywhere by the real path of the file
+ * after the open, which must lead to the same file. Without `/proc` a link that is put in and taken out again fast
+ * enough can still get through. `afterCheck` is for tests: it runs between the check of the folder and the open.
  */
-async function regularFile(root: string, path: string, max: number) {
+export async function regularFile(
+    root: string,
+    path: string,
+    max: number,
+    afterCheck?: () => Promise<void>,
+) {
     const folder = await Promise.all([realpath(root), realpath(dirname(join(root, path)))]).catch(
         () => undefined,
     );
+    const inside = (real: string) => real === folder?.[0] || real.startsWith(folder?.[0] + sep);
 
-    if (!folder || (folder[1] !== folder[0] && !folder[1].startsWith(folder[0] + sep))) {
+    if (!folder || !inside(folder[1])) {
         return undefined;
     }
 
+    await afterCheck?.();
+
     // The real folder, then the file with no link allowed.
+    const full = join(folder[1], basename(path));
     const handle = await open(
-        join(folder[1], basename(path)),
+        full,
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     ).catch(() => undefined);
 
@@ -1003,6 +1026,21 @@ async function regularFile(root: string, path: string, max: number) {
         const info = await handle.stat();
 
         if (!info.isFile()) {
+            return undefined;
+        }
+
+        // The opened file: where Linux says it is (a file that was deleted has "(deleted)" after its name) ...
+        const there = await readlink(`/proc/self/fd/${handle.fd}`).catch(() => undefined);
+
+        if (there !== undefined && !inside(there)) {
+            return undefined;
+        }
+
+        // ... and where its path leads now, to the same file.
+        const now = await realpath(full).catch(() => undefined);
+        const same = now === undefined ? undefined : await lstat(now).catch(() => undefined);
+
+        if (!now || !inside(now) || same?.dev !== info.dev || same?.ino !== info.ino) {
             return undefined;
         }
 
