@@ -55,10 +55,11 @@ A target is one of these:
 
 **Reads**
 
-- The git repository that holds the session's folder, or one inside the session's folder, with `git`
-  (`diff`, `log`, `show`, `rev-parse`, `ls-files`, `remote get-url`). The tools refuse any other
-  repository, also through a link. Anyone who can steer a session can make Pi call the tools, and
-  Lancet Guard does not see them, so they stay in the session's folder.
+- A git repository, with `git` (`diff`, `log`, `show`, `rev-parse`, `ls-files`, `remote get-url`): the
+  session's folder by default, or the folder that Pi gives in `repo`. That can be any repository that
+  the server's user can read. Anyone who can steer a session can make Pi call the tools, and Lancet
+  Guard does not see them, so give a session access to the tools only if you trust it with every
+  repository on the machine.
 - Working tree files that Git does not know yet, when the target is the local changes (up to 200 KB
   each, regular files only: a symbolic link is never followed). Files that `.gitignore` names are not
   read.

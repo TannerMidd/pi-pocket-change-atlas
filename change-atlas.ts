@@ -1,9 +1,9 @@
 /**
- * Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads the git repository of the session's folder with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.
+ * Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads a git repository (the session's folder, or the folder that Pi names) with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.
  *
  * Two tools: `change_atlas_scan` reads the repository (the file list, commits, import links, and short diff excerpts)
- * and `change_atlas_publish` writes the report page, with a story that Pi writes in ASD-STE100. The tools map only
- * the repository that holds the session's folder, or one inside it. A diff can hold a secret: the tools do not
+ * and `change_atlas_publish` writes the report page, with a story that Pi writes in ASD-STE100. Pi can name any
+ * repository that the server's user can read, and Lancet Guard does not see these tools. A diff can hold a secret: the tools do not
  * look for secrets, so the scan's excerpts reach the model provider as they are, and the report file keeps the diffs
  * until someone deletes it. The commits of a fetched PR stay in `change-atlas/git/` in the data folder, never in the
  * repository. The report page runs its own script only, under a content security policy that blocks
@@ -1060,25 +1060,8 @@ async function dependencyChanges(repo: Repo, base: string, head: string, files: 
     return changes;
 }
 
-/**
- * Pi chooses the repository, and anyone who can steer a session can make Pi choose. So the tools map only the
- * repository that holds the session's folder, or one inside that folder. Links are resolved first.
- */
-async function assertInSession(root: string, session: string) {
-    const [repo, folder] = await Promise.all([realpath(root), realpath(session)]);
-    const holds = (outer: string, inner: string) =>
-        inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
-
-    if (!holds(repo, folder) && !holds(folder, repo)) {
-        throw new Error(
-            `Change Atlas maps only the repository of the session folder (${folder}), or one inside it. ${repo} is somewhere else. Start a session in that repository.`,
-        );
-    }
-}
-
 async function scanRepo(
     cwd: string,
-    session: string,
     cacheRoot: string,
     target: string,
     baseArg?: string,
@@ -1089,8 +1072,6 @@ async function scanRepo(
             throw new Error(`${cwd} is not in a git repository. Give repo: the folder of one.`);
         })
     ).trim();
-
-    await assertInSession(root, session);
 
     // The objects of fetched PRs live in a bare repository of this module's data, one for each repository.
     const key = createHash("sha256")
@@ -1716,22 +1697,21 @@ export default function createChangeAtlas(host: Host, web: Web) {
     const outDir = join(host.dataDir, "change-atlas");
     const cacheRoot = join(outDir, "git");
 
-    /** The folder to scan, and the session's folder, which the repository must hold or be in. */
-    const folders = async (
+    const repoFolder = async (
         api: { agent(context: unknown): Promise<{ cwd?: string }> },
         context: unknown,
         repo?: string,
     ) => {
-        const session = (await api.agent(context)).cwd ?? process.cwd();
+        const cwd = (await api.agent(context)).cwd ?? process.cwd();
 
-        return { session, folder: repo ? resolve(session, expandHome(repo)) : session };
+        return repo ? resolve(cwd, expandHome(repo)) : cwd;
     };
 
     const scanTool = Object.assign(
         defineTool({
             name: "change_atlas_scan",
             description:
-                "Step 1 of a Change Atlas, a visual report of code changes. Reads a PR, branch, commit range, or local changes with git, and lists files, commits, components, import links, and diff excerpts. For a PR it also runs gh and git fetch over HTTPS (they contact GitHub) and keeps the PR commits in a cache in the data folder. It changes no file of the repository. It maps only the repository of the session folder. Then call change_atlas_publish.",
+                "Step 1 of a Change Atlas, a visual report of code changes. Reads a PR, branch, commit range, or local changes with git, and lists files, commits, components, import links, and diff excerpts. For a PR it also runs gh and git fetch over HTTPS (they contact GitHub) and keeps the PR commits in a cache in the data folder. It changes no file of the repository. Then call change_atlas_publish.",
             parameters: Type.Object({
                 target: Type.Optional(
                     Type.String({
@@ -1741,15 +1721,17 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 ),
                 repo: Type.Optional(
                     Type.String({
-                        description:
-                            "The repository folder, in the session folder. Default: the session folder",
+                        description: "The repository folder. Default: the session folder",
                     }),
                 ),
             }),
             replay: "safe",
             execute: async (args, api, context) => {
-                const { folder, session } = await folders(api as never, context, args.repo);
-                const scan = await scanRepo(folder, session, cacheRoot, args.target ?? "");
+                const scan = await scanRepo(
+                    await repoFolder(api as never, context, args.repo),
+                    cacheRoot,
+                    args.target ?? "",
+                );
 
                 if (scan.files.length === 0) {
                     return {
@@ -1917,10 +1899,8 @@ export default function createChangeAtlas(host: Host, web: Web) {
             // The file name comes from the call, so a second run writes the same file again.
             replay: "safe",
             execute: async (args, api, context) => {
-                const { folder, session } = await folders(api as never, context, args.repo);
                 const scan = await scanRepo(
-                    folder,
-                    session,
+                    await repoFolder(api as never, context, args.repo),
                     cacheRoot,
                     args.target ?? "",
                     args.base,
