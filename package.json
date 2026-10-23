@@ -12,7 +12,7 @@
     "scripts": {
         "check": "tsc --noEmit -p tsconfig.json && node --check change-atlas/index.js && node --check change-atlas/report.js",
         "test": "node --test test/*.test.ts",
-        "format:check": "prettier --check --tab-width 4 --print-width 100 change-atlas.ts change-atlas/*.js change-atlas/report.css test/*.ts README.md package.json"
+        "format:check": "prettier --check --tab-width 4 --print-width 100 change-atlas.ts change-atlas/*.js change-atlas/report.css test/*.ts README.md package.json docs/gallery-entry.json"
     },
     "peerDependencies": {
         "@earendil-works/pi-ai": "*",

@@ -1,0 +1,53 @@
+{
+    "name": "change-atlas",
+    "title": "Change Atlas",
+    "description": "Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads the git repository of the session's folder with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.",
+    "tags": ["review", "git", "pull-request", "diff", "visualization", "report", "ste"],
+    "author": {
+        "name": "Tanner Middleton",
+        "github": "TannerMidd"
+    },
+    "version": "1.0.0",
+    "source": {
+        "repo": "TannerMidd/pi-pocket-change-atlas",
+        "commit": "TO_FILL",
+        "path": ""
+    },
+    "files": [
+        {
+            "name": "change-atlas.ts",
+            "sha256": "2cca92aae84c83763ef11298496fa9addf9369092d073b74f09a99990507a361",
+            "size": 64577
+        },
+        {
+            "name": "change-atlas/index.js",
+            "sha256": "530e41fde5cfcea1772ded16714cbcbb3651fa160a5a3b667735b549bf19951e",
+            "size": 1287
+        },
+        {
+            "name": "change-atlas/report.css",
+            "sha256": "85591c58c012556cd3780a4e53bd00ce70ad8e27d62863b6d807a1e5c6adb8e5",
+            "size": 27051
+        },
+        {
+            "name": "change-atlas/report.js",
+            "sha256": "e504283f5b1b874df8a999b81368ea2fb1e4d36c6537fa300f0ff6bcf0d993ee",
+            "size": 89125
+        }
+    ],
+    "pocketApi": 2,
+    "minPocket": "0.19.0",
+    "declares": {
+        "extensions": ["change-atlas"],
+        "tools": ["change_atlas_scan", "change_atlas_publish"],
+        "readOnlyTools": ["change_atlas_scan"],
+        "hooks": [],
+        "sections": [],
+        "wraps": [],
+        "routes": [],
+        "client": "owner",
+        "access": "owner",
+        "commands": []
+    },
+    "revoked": []
+}
