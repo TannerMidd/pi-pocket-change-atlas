@@ -126,6 +126,14 @@ const GIT_SETTINGS: [string, string][] = [
     ["core.quotepath", "off"],
     ["core.askPass", ""],
     ["core.sshCommand", "false"],
+    // Signatures: git calls `gpg.program` (or the ssh or x509 one) to check one.
+    ["log.showSignature", "false"],
+    ["merge.verifySignatures", "false"],
+    ["pull.verifySignatures", "false"],
+    ["gpg.program", "false"],
+    ["gpg.openpgp.program", "false"],
+    ["gpg.ssh.program", "false"],
+    ["gpg.x509.program", "false"],
     ["credential.helper", ""],
     ["protocol.allow", "never"],
     ["protocol.ext.allow", "never"],
@@ -1011,7 +1019,7 @@ async function fileAt(repo: Repo, rev: string, path: string) {
         return (await regularFile(repo.root, path, 1_000_000))?.buffer?.toString("utf8");
     }
 
-    const out = await git(repo, ["show", `${rev}:${path}`], true);
+    const out = await git(repo, ["show", "--no-show-signature", `${rev}:${path}`], true);
 
     return out || undefined;
 }
@@ -1100,9 +1108,10 @@ async function scanRepo(
         head === WORKTREE
             ? Promise.resolve("")
             : git(
-                  root,
+                  repo,
                   [
                       "log",
+                      "--no-show-signature",
                       "--no-merges",
                       "-n",
                       "300",

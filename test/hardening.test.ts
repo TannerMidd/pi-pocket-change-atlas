@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -159,6 +160,8 @@ test("fetched PR objects go to a cache in the data folder: the repository is not
 
     assert.match(scan, /PR #7 · feature → main/);
     assert.match(scan, /b\.txt/);
+    // The commit list comes from the cache too.
+    assert.match(scan, /Commits:[\s\S]*second/);
     assert.match(
         await wrapper.fetches(),
         /^fetch .*https:\/\/github\.com\/acme\/widgets\.git pull\/7\/head$/m,
@@ -183,4 +186,56 @@ test("fetched PR objects go to a cache in the data folder: the repository is not
     assert.ok(parent);
     await gh.remove();
     await wrapper.remove();
+});
+
+test("a program that a repository's config names for signatures is never run", async () => {
+    const dir = await repo();
+    const run = await marker();
+
+    // A commit with a signature header, so that Git has something to check.
+    await writeFile(join(dir, "a.txt"), "hello\nsigned\n");
+    git(dir, "add", "-A");
+
+    const tree = git(dir, "write-tree");
+    const parent = git(dir, "rev-parse", "HEAD");
+    const raw = [
+        `tree ${tree}`,
+        `parent ${parent}`,
+        "author Test <test@example.com> 1700000000 +0000",
+        "committer Test <test@example.com> 1700000000 +0000",
+        "gpgsig -----BEGIN PGP SIGNATURE-----",
+        " ",
+        " AAAA",
+        " -----END PGP SIGNATURE-----",
+        "",
+        "signed",
+        "",
+    ].join("\n");
+    const signed = execFileSync("git", ["hash-object", "-t", "commit", "-w", "--stdin"], {
+        cwd: dir,
+        input: raw,
+        encoding: "utf8",
+    }).trim();
+
+    git(dir, "update-ref", "refs/heads/main", signed);
+    git(dir, "config", "log.showSignature", "true");
+    git(dir, "config", "merge.verifySignatures", "true");
+
+    for (const key of [
+        "gpg.program",
+        "gpg.openpgp.program",
+        "gpg.ssh.program",
+        "gpg.x509.program",
+    ]) {
+        git(dir, "config", key, run.script);
+    }
+
+    const atlas = await harness(dir);
+
+    assert.match(await atlas.call("change_atlas_scan", { target: "HEAD~1..HEAD" }), /signed/);
+    assert.match(
+        await atlas.call("change_atlas_scan", { target: "HEAD" }),
+        /Commit HEAD|No changes/,
+    );
+    assert.equal(await run.ran(), "");
 });
