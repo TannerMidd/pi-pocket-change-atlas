@@ -3,7 +3,8 @@
  * It reads the repository with `git` (and `gh` for pull requests), writes reports to `change-atlas/` in the data folder, and sends nothing elsewhere.
  */
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, posix, resolve } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "@earendil-works/pi-ai";
@@ -864,9 +865,39 @@ function autoArchitecture(files: FileChange[]) {
     return { components: [...components.values()], links, externalImports };
 }
 
+/**
+ * A file of the working tree, if it is a regular file. A symbolic link is never followed: it can point to any file on
+ * the machine, and its text would go into the report and to Pi. `size` is the real size; `buffer` is there only when
+ * the file is no larger than `max`.
+ */
+async function regularFile(path: string, max: number) {
+    const handle = await open(
+        path,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    ).catch(() => undefined);
+
+    if (!handle) {
+        return undefined;
+    }
+
+    try {
+        const info = await handle.stat();
+
+        if (!info.isFile()) {
+            return undefined;
+        }
+
+        return { size: info.size, buffer: info.size <= max ? await handle.readFile() : undefined };
+    } catch {
+        return undefined;
+    } finally {
+        await handle.close();
+    }
+}
+
 async function fileAt(root: string, rev: string, path: string) {
     if (rev === WORKTREE) {
-        return readFile(join(root, path), "utf8").catch(() => undefined);
+        return (await regularFile(join(root, path), 1_000_000))?.buffer?.toString("utf8");
     }
 
     const out = await git(root, ["show", `${rev}:${path}`], true);
@@ -1047,14 +1078,13 @@ async function scanRepo(
         );
 
         for (const path of untracked.slice(0, MAX_FILES)) {
-            const full = join(root, path);
-            const info = await stat(full).catch(() => undefined);
+            const file = await regularFile(join(root, path), MAX_UNTRACKED_BYTES);
 
-            if (!info?.isFile()) {
+            if (!file) {
                 continue;
             }
 
-            const buffer = info.size <= MAX_UNTRACKED_BYTES ? await readFile(full) : undefined;
+            const { buffer } = file;
             const binary = buffer === undefined || buffer.includes(0);
             const text = binary ? "" : buffer.toString("utf8");
             const rows = text === "" ? [] : text.replace(/\n$/, "").split("\n");
