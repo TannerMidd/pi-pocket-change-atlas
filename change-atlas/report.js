@@ -480,7 +480,7 @@
             { class: "eyebrow" },
             el("span", { class: "chip brand" }, "◆ Change Atlas"),
             el("span", { class: "chip" }, el("b", {}, data.repo)),
-            data.pr && data.pr.url
+            data.pr && /^https:\/\//i.test(String(data.pr.url))
                 ? el(
                       "a",
                       {

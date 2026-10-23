@@ -3,6 +3,7 @@
  * It reads the repository with `git` (and `gh` for pull requests), writes reports to `change-atlas/` in the data folder, and sends nothing elsewhere.
  */
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, posix, resolve, sep } from "node:path";
@@ -1445,10 +1446,22 @@ async function renderReport(scan: Scan, story: Narrative, ste: ReturnType<typeof
         ste,
     };
 
+    const script = js.replace(/<\/script/gi, "<\\/script");
+    // The report shows text from a repository. If some of it ever ran as code, this policy still stops it: only the
+    // report's own script runs (by its hash), and nothing loads from, or goes to, any address.
+    const policy = [
+        "default-src 'none'",
+        `script-src 'sha256-${createHash("sha256").update(script).digest("base64")}'`,
+        "style-src 'unsafe-inline'",
+        "base-uri 'none'",
+        "form-action 'none'",
+    ].join("; ");
+
     return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${policy}">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <title>${escapeHtml(story.title)} · Change Atlas</title>
@@ -1457,7 +1470,7 @@ async function renderReport(scan: Scan, story: Narrative, ste: ReturnType<typeof
 <body>
 <div id="app"><p class="boot">Loading the change atlas…</p></div>
 <script type="application/json" id="atlas-data">${safeJson(data)}</script>
-<script>${js.replace(/<\/script/gi, "<\\/script")}</script>
+<script>${script}</script>
 </body>
 </html>
 `;
