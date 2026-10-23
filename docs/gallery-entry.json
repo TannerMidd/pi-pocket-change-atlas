@@ -16,8 +16,8 @@
     "files": [
         {
             "name": "change-atlas.ts",
-            "sha256": "f47d4e6c89cd498df55c18f9cd8932a3976f3b8577e9ec223a126c5bea77167e",
-            "size": 68643
+            "sha256": "a02a58aa7c309f72892d08127d2409ef973f6b489da6ba2c5fd0c7d79f818bb6",
+            "size": 71444
         },
         {
             "name": "change-atlas/index.js",
