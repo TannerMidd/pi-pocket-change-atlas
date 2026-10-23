@@ -12,7 +12,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import { mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, posix, resolve, sep } from "node:path";
+import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -966,13 +966,23 @@ function autoArchitecture(files: FileChange[]) {
 }
 
 /**
- * A file of the working tree, if it is a regular file. A symbolic link is never followed: it can point to any file on
- * the machine, and its text would go into the report and to Pi. `size` is the real size; `buffer` is there only when
- * the file is no larger than `max`.
+ * A file of the working tree (`path`, in the repository `root`), if it is a regular file in the repository. A
+ * symbolic link is never followed, in the last part of the path or in any folder of it: a link can point to any file
+ * on the machine, and its text would go into the report and to Pi. `size` is the real size; `buffer` is there only
+ * when the file is no larger than `max`.
  */
-async function regularFile(path: string, max: number) {
+async function regularFile(root: string, path: string, max: number) {
+    const folder = await Promise.all([realpath(root), realpath(dirname(join(root, path)))]).catch(
+        () => undefined,
+    );
+
+    if (!folder || (folder[1] !== folder[0] && !folder[1].startsWith(folder[0] + sep))) {
+        return undefined;
+    }
+
+    // The real folder, then the file with no link allowed.
     const handle = await open(
-        path,
+        join(folder[1], basename(path)),
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     ).catch(() => undefined);
 
@@ -997,7 +1007,7 @@ async function regularFile(path: string, max: number) {
 
 async function fileAt(repo: Repo, rev: string, path: string) {
     if (rev === WORKTREE) {
-        return (await regularFile(join(repo.root, path), 1_000_000))?.buffer?.toString("utf8");
+        return (await regularFile(repo.root, path, 1_000_000))?.buffer?.toString("utf8");
     }
 
     const out = await git(repo, ["show", `${rev}:${path}`], true);
@@ -1205,7 +1215,7 @@ async function scanRepo(
         );
 
         for (const path of untracked.slice(0, MAX_FILES)) {
-            const file = await regularFile(join(root, path), MAX_UNTRACKED_BYTES);
+            const file = await regularFile(root, path, MAX_UNTRACKED_BYTES);
 
             if (!file) {
                 continue;
