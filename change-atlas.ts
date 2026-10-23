@@ -177,6 +177,11 @@ async function defaultBranch(root: string) {
 }
 
 async function sha(root: string, ref: string) {
+    // A ref comes from the model or from a remote. Git must never read it as an option.
+    if (ref.startsWith("-")) {
+        throw new Error(`"${ref}" is not a ref: a ref must not start with "-".`);
+    }
+
     const out = (
         await git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], true)
     ).trim();
@@ -244,7 +249,9 @@ async function resolveTarget(
 
     const prMatch =
         /^(?:pr\s*)?#?(\d+)$/i.exec(text) ??
-        /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/i.exec(text);
+        /^https:\/\/github\.com\/([a-z\d][\w-]*\/(?!\.{1,2}\/)[\w.-]+)\/pull\/(\d+)(?:[/?#]|$)/i.exec(
+            text,
+        );
 
     if (prMatch) {
         const number = prMatch.length === 3 ? prMatch[2] : prMatch[1];
@@ -280,11 +287,25 @@ async function resolveTarget(
             ).trim() !== "";
 
         if (!(await have(view.headRefOid))) {
-            await git(root, ["fetch", "--no-tags", "--quiet", remote, `pull/${view.number}/head`]);
+            await git(root, [
+                "fetch",
+                "--no-tags",
+                "--quiet",
+                "--",
+                remote,
+                `pull/${view.number}/head`,
+            ]);
         }
 
         if (!(await have(view.baseRefOid))) {
-            await git(root, ["fetch", "--no-tags", "--quiet", remote, view.baseRefName]);
+            await git(root, [
+                "fetch",
+                "--no-tags",
+                "--quiet",
+                "--",
+                remote,
+                `refs/heads/${view.baseRefName}`,
+            ]);
         }
 
         const head = await sha(root, view.headRefOid);
@@ -912,17 +933,19 @@ async function scanRepo(
     const { base, head } = resolved;
     const range = head === WORKTREE ? [base] : [base, head];
     const [numstat, names, patch, log, remote] = await Promise.all([
-        git(root, ["diff", "-M", "-z", "--numstat", ...range]),
-        git(root, ["diff", "-M", "-z", "--name-status", ...range]),
+        git(root, ["diff", "-M", "-z", "--numstat", ...range, "--"]),
+        git(root, ["diff", "-M", "-z", "--name-status", ...range, "--"]),
         git(root, [
             "diff",
             "-M",
             "--no-color",
             "--no-ext-diff",
+            "--no-textconv",
             "-U3",
             "--src-prefix=a/",
             "--dst-prefix=b/",
             ...range,
+            "--",
         ]),
         head === WORKTREE
             ? Promise.resolve("")

@@ -1,0 +1,105 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import type { Host, Web } from "../_pocket.d.ts";
+import setup from "../change-atlas.ts";
+
+// No user or system Git settings: a test must give the same result on every machine.
+process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+process.env.GIT_CONFIG_NOSYSTEM = "1";
+
+type Tool = {
+    name: string;
+    annotations?: { readOnlyHint?: boolean };
+    execute(args: object, api: object, context: unknown): Promise<{ output: { text: string }[] }>;
+};
+
+/** Like `host.text`, but easy to see in a result: `Q[…]` is a quoted line, `D[…]` is defanged text. */
+export const text = {
+    quoted: (value: string, max = 120) =>
+        `Q[${value
+            .replace(/[\r\n\0]+/g, " ")
+            .replace(/</g, "‹")
+            .slice(0, max)}]`,
+    defang: (value: string) => `D[${value.replace(/<(?=[^<>]{0,80}\/)/g, "‹")}]`,
+};
+
+export async function temp(prefix: string) {
+    return mkdtemp(join(tmpdir(), `change-atlas-${prefix}-`));
+}
+
+export function git(cwd: string, ...args: string[]) {
+    return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+/** A repository with one commit, `a.txt` ("hello"), on `main`. */
+export async function repo(parent?: string, name = "repo") {
+    const dir = join(parent ?? (await temp("repo")), name);
+
+    await mkdir(dir, { recursive: true });
+    git(dir, "init", "-q", "-b", "main");
+    git(dir, "config", "user.email", "test@example.com");
+    git(dir, "config", "user.name", "Test");
+    await writeFile(join(dir, "a.txt"), "hello\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-qm", "first");
+
+    return dir;
+}
+
+/** A fake `gh` that logs its arguments and prints the JSON in `json`. */
+export async function fakeGh(json: object) {
+    const dir = await temp("gh");
+    const log = join(dir, "calls.log");
+
+    await writeFile(join(dir, "reply.json"), JSON.stringify(json));
+    await writeFile(
+        join(dir, "gh"),
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\ncat '${join(dir, "reply.json")}'\n`,
+    );
+    await chmod(join(dir, "gh"), 0o755);
+    process.env.PATH = `${dir}${delimiter}${(process.env.PATH ?? "")
+        .split(delimiter)
+        .filter((part) => !part.includes("change-atlas-gh-"))
+        .join(delimiter)}`;
+
+    return {
+        calls: () => readFile(log, "utf8").catch(() => ""),
+        remove: () => rm(dir, { recursive: true, force: true }),
+    };
+}
+
+export async function harness(cwd: string, options: { dataDir?: string } = {}) {
+    const dataDir = options.dataDir ?? (await temp("data"));
+    const clients: [string, unknown][] = [];
+    const routes: string[] = [];
+    const web = {
+        client: (name: string, spec: unknown) => clients.push([name, spec]),
+        route: (method: string, path: string) => routes.push(`${method} ${path}`),
+        conversationRoute: (method: string, path: string) => routes.push(`${method} ${path}`),
+        command: () => routes.push("command"),
+        send: () => undefined,
+        onDispose: () => undefined,
+    };
+    const extension = (await setup(
+        { dataDir, text } as unknown as Host,
+        web as unknown as Web,
+    )) as unknown as {
+        name: string;
+        tools: Tool[];
+    };
+    const tools = new Map(extension.tools.map((tool) => [tool.name, tool]));
+    const api = { agent: async () => ({ cwd }), taskId: "task-1", callId: "call-1" };
+    const call = async (name: string, args: object) => {
+        const result = await tools.get(name)!.execute(args, api, {});
+
+        return result.output.map((part) => part.text).join("\n");
+    };
+    const fails = async (name: string, args: object, pattern: RegExp) => {
+        await assert.rejects(call(name, args), pattern);
+    };
+
+    return { dataDir, extension, tools, clients, routes, call, fails };
+}
