@@ -71,6 +71,40 @@ export async function fakeGh(json: object) {
     };
 }
 
+/**
+ * A `git` in front of the real one. A `git fetch` from an https address is never run: it is logged, and it stops
+ * (nothing in a test may reach the network), or, with `source`, it fetches the last argument from that folder
+ * instead, with no hardening settings. Every other call goes to the real `git`.
+ */
+export async function fakeGit(source?: string) {
+    const dir = await temp("git");
+    const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const log = join(dir, "fetches.log");
+    const fetch = source
+        ? `unset GIT_CONFIG_COUNT\nfor last; do :; done\nexec '${real}' fetch --no-tags -q '${source}' "$last"`
+        : "exit 1";
+
+    await writeFile(
+        join(dir, "git"),
+        `#!/bin/sh
+case " $* " in
+    *" fetch "*"https://"*) printf '%s\\n' "$*" >> '${log}'; ${fetch} ;;
+esac
+exec '${real}' "$@"
+`,
+    );
+    await chmod(join(dir, "git"), 0o755);
+    process.env.PATH = `${dir}${delimiter}${(process.env.PATH ?? "")
+        .split(delimiter)
+        .filter((part) => !part.includes("change-atlas-git-"))
+        .join(delimiter)}`;
+
+    return {
+        fetches: () => readFile(log, "utf8").catch(() => ""),
+        remove: () => rm(dir, { recursive: true, force: true }),
+    };
+}
+
 export async function harness(cwd: string, options: { dataDir?: string } = {}) {
     const dataDir = options.dataDir ?? (await temp("data"));
     const clients: [string, unknown][] = [];

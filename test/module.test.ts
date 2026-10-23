@@ -49,7 +49,7 @@ test("the module imports only its own files, Node, and Pi Pocket's packages", as
         source,
         /\b(eval|new Function|vm\.run\w+)\s*\(|child_process["']\)|(?<![.\w])exec(Sync)?\(|shell:\s*true/,
     );
-    assert.doesNotMatch(source, /https?:\/\/(?!github\.com\/\$\{)/);
+    assert.doesNotMatch(source, /https?:\/\/(?!github\.com[/.])/);
     assert.doesNotMatch(
         source,
         /\bfetch\(|fetchPublic|XMLHttpRequest|WebSocket|TODO|FIXME|console\./,

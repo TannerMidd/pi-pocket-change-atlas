@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { fakeGh, git, harness, repo, temp } from "./harness.ts";
+import { fakeGh, fakeGit, git, harness, repo, temp } from "./harness.ts";
 
 test("it names two tools and one owner page, and adds no route", async () => {
     const dir = await repo();
@@ -163,14 +163,16 @@ test("the base branch of a PR cannot become a fetch option", async () => {
         baseRefOid: "0123456789abcdef0123456789abcdef01234567",
         author: { login: "ada" },
     });
-    const origin = await repo(parent, "origin");
-
-    git(dir, "remote", "add", "origin", origin);
-
+    // The fetch goes nowhere: it is logged and stopped.
+    const wrapper = await fakeGit();
     const atlas = await harness(dir);
 
     await assert.rejects(atlas.call("change_atlas_scan", { target: "7" }));
     await assert.rejects(access(mark));
-    assert.match(await readFile(join(dir, ".git", "config"), "utf8"), /origin/);
+    assert.match(
+        await wrapper.fetches(),
+        / -- https:\/\/github\.com\/acme\/widgets\.git refs\/heads\/--upload-pack=touch /,
+    );
     await gh.remove();
+    await wrapper.remove();
 });

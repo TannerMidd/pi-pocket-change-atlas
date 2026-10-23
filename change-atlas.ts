@@ -10,7 +10,7 @@
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, posix, resolve, sep } from "node:path";
 import { homedir } from "node:os";
@@ -107,11 +107,68 @@ type AutoLink = {
     status: "added" | "removed" | "changed";
 };
 
+/** A repository to read: its folder, and the bare repository (`cache`) that holds the objects of the PRs fetched for it. */
+type Repo = { root: string; cache?: string };
+
+/** Text from outside, for an error message: one line, in quotes, with no tag. */
+const shown = (text: string) => JSON.stringify(text.slice(0, 300)).replaceAll("<", "‹");
+
+/**
+ * Git settings that a repository's own config could use to run a program, set for every `git` and `gh` call
+ * (through the environment, so the programs that `gh` starts get them too). They stand above all config files.
+ * A repository's config is not trusted: it can name a program for `core.fsmonitor`, a hook, or a pager.
+ */
+const GIT_SETTINGS: [string, string][] = [
+    ["core.fsmonitor", "false"],
+    ["core.hooksPath", "/dev/null"],
+    ["core.pager", "cat"],
+    ["core.quotepath", "off"],
+    ["core.askPass", ""],
+    ["core.sshCommand", "false"],
+    ["credential.helper", ""],
+    ["protocol.allow", "never"],
+    ["protocol.ext.allow", "never"],
+    ["protocol.file.allow", "never"],
+];
+
+/** Environment variables with which Git or `gh` would run a program, or look at another repository. */
+const UNSAFE_ENV =
+    /^(GIT_(EXTERNAL_DIFF|DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|SSH|SSH_COMMAND|PROXY_COMMAND|ASKPASS|EDITOR|SEQUENCE_EDITOR|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)|SSH_ASKPASS|GH_(PAGER|EDITOR|BROWSER))$/;
+
+function hardenedEnv(settings: [string, string][] = [], extra: Record<string, string> = {}) {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+
+    for (const key of Object.keys(env)) {
+        if (UNSAFE_ENV.test(key)) {
+            delete env[key];
+        }
+    }
+
+    const all = [...GIT_SETTINGS, ...settings];
+
+    env.GIT_CONFIG_COUNT = String(all.length);
+
+    all.forEach(([key, value], at) => {
+        env[`GIT_CONFIG_KEY_${at}`] = key;
+        env[`GIT_CONFIG_VALUE_${at}`] = value;
+    });
+
+    return {
+        ...env,
+        GIT_PAGER: "cat",
+        PAGER: "cat",
+        GH_PAGER: "cat",
+        GIT_TERMINAL_PROMPT: "0",
+        GH_PROMPT_DISABLED: "1",
+        ...extra,
+    };
+}
+
 function run(
     command: string,
     args: string[],
     cwd: string,
-    options: { allowFail?: boolean; timeout?: number } = {},
+    options: { allowFail?: boolean; timeout?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<string> {
     return new Promise((done, fail) => {
         execFile(
@@ -121,12 +178,7 @@ function run(
                 cwd,
                 maxBuffer: 256 * 1024 * 1024,
                 timeout: options.timeout ?? 120_000,
-                env: {
-                    ...process.env,
-                    GIT_PAGER: "cat",
-                    PAGER: "cat",
-                    GIT_TERMINAL_PROMPT: "0",
-                },
+                env: options.env ?? hardenedEnv(),
             },
             (error, stdout, stderr) => {
                 if (error) {
@@ -142,11 +194,7 @@ function run(
                         .slice(-4)
                         .join(" ");
 
-                    fail(
-                        new Error(
-                            `${command} ${args[0] === "-c" ? args[2] : args[0]} failed: ${words}`,
-                        ),
-                    );
+                    fail(new Error(`${command} ${args[0]} failed: ${shown(words)}`));
 
                     return;
                 }
@@ -157,16 +205,28 @@ function run(
     });
 }
 
-const git = (cwd: string, args: string[], allowFail = false) =>
-    run("git", ["-c", "core.quotepath=off", ...args], cwd, { allowFail });
+/** Runs `git` in a repository (or in a folder), with the hardened settings. The PR objects of a repository come from its cache. */
+const git = (where: Repo | string, args: string[], allowFail = false) => {
+    const repo = typeof where === "string" ? { root: where } : where;
+
+    return run("git", args, repo.root, {
+        allowFail,
+        env: hardenedEnv(
+            [],
+            repo.cache && existsSync(repo.cache)
+                ? { GIT_ALTERNATE_OBJECT_DIRECTORIES: join(repo.cache, "objects") }
+                : {},
+        ),
+    });
+};
 
 function expandHome(path: string) {
     return path === "~" || path.startsWith("~/") ? join(homedir(), path.slice(1)) : path;
 }
 
-async function defaultBranch(root: string) {
+async function defaultBranch(repo: Repo) {
     const head = (
-        await git(root, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], true)
+        await git(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], true)
     ).trim();
 
     if (head) {
@@ -175,7 +235,7 @@ async function defaultBranch(root: string) {
 
     for (const name of ["main", "master", "origin/main", "origin/master", "develop", "trunk"]) {
         if (
-            (await git(root, ["rev-parse", "--verify", "--quiet", `${name}^{commit}`], true)).trim()
+            (await git(repo, ["rev-parse", "--verify", "--quiet", `${name}^{commit}`], true)).trim()
         ) {
             return name;
         }
@@ -184,44 +244,74 @@ async function defaultBranch(root: string) {
     return undefined;
 }
 
-async function sha(root: string, ref: string) {
+async function sha(repo: Repo, ref: string) {
     // A ref comes from the model or from a remote. Git must never read it as an option.
     if (ref.startsWith("-")) {
-        throw new Error(`"${ref}" is not a ref: a ref must not start with "-".`);
+        throw new Error(`${shown(ref)} is not a ref: a ref must not start with "-".`);
     }
 
     const out = (
-        await git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], true)
+        await git(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], true)
     ).trim();
 
     if (!out) {
-        throw new Error(`Git does not know the ref "${ref}" in ${root}.`);
+        throw new Error(`Git does not know the ref ${shown(ref)} in ${shown(repo.root)}.`);
     }
 
     return out;
 }
 
-async function mergeBase(root: string, a: string, b: string) {
-    const out = (await git(root, ["merge-base", a, b], true)).trim();
+async function mergeBase(repo: Repo, a: string, b: string) {
+    const out = (await git(repo, ["merge-base", a, b], true)).trim();
 
     return out || a;
+}
+
+/**
+ * Fetches one ref of a GitHub repository into the bare repository `repo.cache`, a folder of this module's data. The
+ * repository that is read is never changed. The fetch has no repository config at all (a new bare repository, and no
+ * user or system config), and its only credential helper is `gh`.
+ */
+async function fetchFromGitHub(repo: Repo, home: string, refspec: string) {
+    const cache = repo.cache!;
+    const env = hardenedEnv(
+        [
+            ["protocol.https.allow", "always"],
+            ["credential.https://github.com.helper", "!gh auth git-credential"],
+            ["gc.auto", "0"],
+            ["maintenance.auto", "false"],
+        ],
+        { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+    );
+
+    if (!existsSync(cache)) {
+        await mkdir(dirname(cache), { recursive: true, mode: 0o700 });
+        await run("git", ["init", "--bare", "-q", "--", cache], dirname(cache), { env });
+    }
+
+    await run(
+        "git",
+        ["fetch", "--no-tags", "--quiet", "--", `https://github.com/${home}.git`, refspec],
+        cache,
+        { env },
+    );
 }
 
 type Resolved = Pick<Scan, "label" | "base" | "head" | "baseRef" | "headRef" | "pr">;
 
 async function resolveTarget(
-    root: string,
+    repo: Repo,
     target: string,
     baseArg?: string,
     headArg?: string,
 ): Promise<Resolved> {
     if (baseArg && headArg) {
-        const head = headArg === WORKTREE ? WORKTREE : await sha(root, headArg);
-        const base = await sha(root, baseArg);
+        const head = headArg === WORKTREE ? WORKTREE : await sha(repo, headArg);
+        const base = await sha(repo, baseArg);
 
         if (target.trim()) {
             // The target again, for its label and pull request; the scan's commits stay the ones to show.
-            const named = await resolveTarget(root, target).catch(() => undefined);
+            const named = await resolveTarget(repo, target).catch(() => undefined);
 
             if (named) {
                 return { ...named, base, head };
@@ -243,8 +333,8 @@ async function resolveTarget(
     const text = target.trim();
 
     if (!text || /^(worktree|working( tree)?|local|uncommitted|wip)$/i.test(text)) {
-        const base = await sha(root, "HEAD");
-        const branch = (await git(root, ["branch", "--show-current"], true)).trim();
+        const base = await sha(repo, "HEAD");
+        const branch = (await git(repo, ["branch", "--show-current"], true)).trim();
 
         return {
             label: `Local changes${branch ? ` on ${branch}` : ""}`,
@@ -263,7 +353,7 @@ async function resolveTarget(
 
     if (prMatch) {
         const number = prMatch.length === 3 ? prMatch[2] : prMatch[1];
-        const repo = prMatch.length === 3 ? prMatch[1] : undefined;
+        const named = prMatch.length === 3 ? prMatch[1] : undefined;
         const view = JSON.parse(
             await run(
                 "gh",
@@ -271,11 +361,11 @@ async function resolveTarget(
                     "pr",
                     "view",
                     number,
-                    ...(repo ? ["--repo", repo] : []),
+                    ...(named ? ["--repo", named] : []),
                     "--json",
                     "number,title,body,url,baseRefName,headRefName,headRefOid,baseRefOid,author",
                 ],
-                root,
+                repo.root,
             ),
         ) as {
             number: number;
@@ -288,36 +378,39 @@ async function resolveTarget(
             baseRefOid: string;
             author?: { login?: string };
         };
-        const remote = repo ? `https://github.com/${repo}.git` : "origin";
+        // The commits come from the repository that GitHub names for the PR, over HTTPS, and never from the
+        // repository's own `origin`, which can be any address (or a program: `ext::`).
+        const home =
+            /^https:\/\/github\.com\/([a-z\d][\w-]*\/(?!\.{1,2}\/)[\w.-]+)\/pull\/\d+$/i.exec(
+                view.url,
+            )?.[1];
+
+        if (
+            !home ||
+            !Number.isInteger(view.number) ||
+            !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(view.headRefOid) ||
+            !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(view.baseRefOid)
+        ) {
+            throw new Error(
+                `gh gave a PR that this tool cannot read: it must be on github.com. The address is ${shown(String(view.url))}.`,
+            );
+        }
+
         const have = async (oid: string) =>
             (
-                await git(root, ["rev-parse", "--verify", "--quiet", `${oid}^{commit}`], true)
+                await git(repo, ["rev-parse", "--verify", "--quiet", `${oid}^{commit}`], true)
             ).trim() !== "";
 
         if (!(await have(view.headRefOid))) {
-            await git(root, [
-                "fetch",
-                "--no-tags",
-                "--quiet",
-                "--",
-                remote,
-                `pull/${view.number}/head`,
-            ]);
+            await fetchFromGitHub(repo, home, `pull/${view.number}/head`);
         }
 
         if (!(await have(view.baseRefOid))) {
-            await git(root, [
-                "fetch",
-                "--no-tags",
-                "--quiet",
-                "--",
-                remote,
-                `refs/heads/${view.baseRefName}`,
-            ]);
+            await fetchFromGitHub(repo, home, `refs/heads/${view.baseRefName}`);
         }
 
-        const head = await sha(root, view.headRefOid);
-        const base = await mergeBase(root, await sha(root, view.baseRefOid), head);
+        const head = await sha(repo, view.headRefOid);
+        const base = await mergeBase(repo, await sha(repo, view.baseRefOid), head);
 
         return {
             label: `PR #${view.number} · ${view.headRefName} → ${view.baseRefName}`,
@@ -338,12 +431,12 @@ async function resolveTarget(
     const triple = text.split("...");
 
     if (triple.length === 2) {
-        const left = await sha(root, triple[0] || "HEAD");
-        const right = await sha(root, triple[1] || "HEAD");
+        const left = await sha(repo, triple[0] || "HEAD");
+        const right = await sha(repo, triple[1] || "HEAD");
 
         return {
             label: `${triple[0] || "HEAD"} … ${triple[1] || "HEAD"}`,
-            base: await mergeBase(root, left, right),
+            base: await mergeBase(repo, left, right),
             head: right,
             baseRef: triple[0] || "HEAD",
             headRef: triple[1] || "HEAD",
@@ -355,21 +448,21 @@ async function resolveTarget(
     if (pair.length === 2) {
         return {
             label: `${pair[0] || "HEAD"} → ${pair[1] || "HEAD"}`,
-            base: await sha(root, pair[0] || "HEAD"),
-            head: await sha(root, pair[1] || "HEAD"),
+            base: await sha(repo, pair[0] || "HEAD"),
+            head: await sha(repo, pair[1] || "HEAD"),
             baseRef: pair[0] || "HEAD",
             headRef: pair[1] || "HEAD",
         };
     }
 
-    const head = await sha(root, text);
-    const main = await defaultBranch(root);
-    let base = main ? await mergeBase(root, await sha(root, main), head) : head;
+    const head = await sha(repo, text);
+    const main = await defaultBranch(repo);
+    let base = main ? await mergeBase(repo, await sha(repo, main), head) : head;
     let baseRef = main ?? text;
 
     if (base === head) {
         // The ref is on the default branch already: show that one commit.
-        base = (await git(root, ["rev-parse", "--verify", "--quiet", `${head}^`], true)).trim();
+        base = (await git(repo, ["rev-parse", "--verify", "--quiet", `${head}^`], true)).trim();
         baseRef = `${text}^`;
 
         if (!base) {
@@ -902,17 +995,17 @@ async function regularFile(path: string, max: number) {
     }
 }
 
-async function fileAt(root: string, rev: string, path: string) {
+async function fileAt(repo: Repo, rev: string, path: string) {
     if (rev === WORKTREE) {
-        return (await regularFile(join(root, path), 1_000_000))?.buffer?.toString("utf8");
+        return (await regularFile(join(repo.root, path), 1_000_000))?.buffer?.toString("utf8");
     }
 
-    const out = await git(root, ["show", `${rev}:${path}`], true);
+    const out = await git(repo, ["show", `${rev}:${path}`], true);
 
     return out || undefined;
 }
 
-async function dependencyChanges(root: string, base: string, head: string, files: FileChange[]) {
+async function dependencyChanges(repo: Repo, base: string, head: string, files: FileChange[]) {
     const changes: DepChange[] = [];
     const groups = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 
@@ -923,7 +1016,7 @@ async function dependencyChanges(root: string, base: string, head: string, files
 
         const read = async (rev: string, path: string) => {
             try {
-                return JSON.parse((await fileAt(root, rev, path)) ?? "{}") as Record<
+                return JSON.parse((await fileAt(repo, rev, path)) ?? "{}") as Record<
                     string,
                     Record<string, string>
                 >;
@@ -975,6 +1068,7 @@ async function assertInSession(root: string, session: string) {
 async function scanRepo(
     cwd: string,
     session: string,
+    cacheRoot: string,
     target: string,
     baseArg?: string,
     headArg?: string,
@@ -987,13 +1081,19 @@ async function scanRepo(
 
     await assertInSession(root, session);
 
-    const resolved = await resolveTarget(root, target, baseArg, headArg);
+    // The objects of fetched PRs live in a bare repository of this module's data, one for each repository.
+    const key = createHash("sha256")
+        .update(await realpath(root))
+        .digest("hex")
+        .slice(0, 16);
+    const repo: Repo = { root, cache: join(cacheRoot, `${key}.git`) };
+    const resolved = await resolveTarget(repo, target, baseArg, headArg);
     const { base, head } = resolved;
     const range = head === WORKTREE ? [base] : [base, head];
     const [numstat, names, patch, log, remote] = await Promise.all([
-        git(root, ["diff", "-M", "-z", "--numstat", ...range, "--"]),
-        git(root, ["diff", "-M", "-z", "--name-status", ...range, "--"]),
-        git(root, [
+        git(repo, ["diff", "-M", "-z", "--numstat", ...range, "--"]),
+        git(repo, ["diff", "-M", "-z", "--name-status", ...range, "--"]),
+        git(repo, [
             "diff",
             "-M",
             "--no-color",
@@ -1019,7 +1119,7 @@ async function scanRepo(
                   ],
                   true,
               ),
-        git(root, ["remote", "get-url", "origin"], true),
+        git(repo, ["remote", "get-url", "origin"], true),
     ]);
     const statuses = new Map<string, { status: Status; oldPath?: string }>();
     const nameParts = splitZ(names);
@@ -1101,7 +1201,7 @@ async function scanRepo(
 
     if (head === WORKTREE) {
         const untracked = splitZ(
-            await git(root, ["ls-files", "-z", "--others", "--exclude-standard"], true),
+            await git(repo, ["ls-files", "-z", "--others", "--exclude-standard"], true),
         );
 
         for (const path of untracked.slice(0, MAX_FILES)) {
@@ -1176,7 +1276,7 @@ async function scanRepo(
         commits,
         files,
         skippedFiles,
-        dependencies: await dependencyChanges(root, base, head, files),
+        dependencies: await dependencyChanges(repo, base, head, files),
         externalImports: arch.externalImports,
         auto: { components: arch.components, links: arch.links },
     };
@@ -1603,6 +1703,7 @@ const STATUS_HINT = "added, changed, removed, or unchanged";
 
 export default function createChangeAtlas(host: Host, web: Web) {
     const outDir = join(host.dataDir, "change-atlas");
+    const cacheRoot = join(outDir, "git");
 
     /** The folder to scan, and the session's folder, which the repository must hold or be in. */
     const folders = async (
@@ -1637,7 +1738,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
             replay: "safe",
             execute: async (args, api, context) => {
                 const { folder, session } = await folders(api as never, context, args.repo);
-                const scan = await scanRepo(folder, session, args.target ?? "");
+                const scan = await scanRepo(folder, session, cacheRoot, args.target ?? "");
 
                 if (scan.files.length === 0) {
                     return {
@@ -1810,6 +1911,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 const scan = await scanRepo(
                     folder,
                     session,
+                    cacheRoot,
                     args.target ?? "",
                     args.base,
                     args.head,
