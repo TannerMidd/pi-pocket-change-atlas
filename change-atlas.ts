@@ -12,7 +12,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
-import { mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "@earendil-works/pi-ai";
@@ -1929,8 +1929,11 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 const path = join(outDir, `${slug}-${key}.html`);
 
                 // A report holds code from the repository, and it can hold a secret. Only the owner's user reads it.
+                // The modes count only for what is new, so an old folder or file is changed too.
                 await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+                await chmod(dirname(path), 0o700);
                 await writeFile(path, html, { encoding: "utf8", mode: 0o600 });
+                await chmod(path, 0o600);
 
                 const known = new Set(scan.files.map((file) => file.path));
                 const unknownNotes = (args.fileNotes ?? [])

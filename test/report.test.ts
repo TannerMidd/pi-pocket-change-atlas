@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { git, harness, repo } from "./harness.ts";
@@ -156,4 +156,21 @@ test("the report script loads and sends nothing over the network", async () => {
         /\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon|\bimport\s*\(|importScripts|\beval\s*\(|new Function|innerHTML|outerHTML|insertAdjacentHTML|document\.write|srcdoc|localStorage|sessionStorage|document\.cookie/,
     );
     assert.doesNotMatch(css, /url\(|@import|https?:/);
+});
+
+test("a report folder and a report file that are open to others are closed again", async () => {
+    const dir = await repo();
+    const atlas = await harness(dir);
+    const args = { base: "HEAD", head: "WORKTREE", ...story };
+    const made = await atlas.call("change_atlas_publish", args);
+    const path = /Wrote the Change Atlas: (\S+\.html)/.exec(made)![1]!;
+
+    await chmod(dirname(path), 0o755);
+    await chmod(path, 0o644);
+    assert.equal((await stat(path)).mode & 0o777, 0o644);
+
+    // The same call again writes the same file.
+    await atlas.call("change_atlas_publish", args);
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.equal((await stat(dirname(path))).mode & 0o777, 0o700);
 });
