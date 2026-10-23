@@ -1594,6 +1594,8 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 };
             },
         }),
+        // It changes no file and no branch. For a pull request it fetches the PR's commits into the
+        // repository's object store; the description says so.
         { annotations: { readOnlyHint: true } },
     );
 
@@ -1773,8 +1775,9 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 const key = `${api.taskId}-${api.callId}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(-16);
                 const path = join(outDir, `${slug}-${key}.html`);
 
-                await mkdir(dirname(path), { recursive: true });
-                await writeFile(path, html, "utf8");
+                // A report holds code from the repository, and it can hold a secret. Only the owner's user reads it.
+                await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+                await writeFile(path, html, { encoding: "utf8", mode: 0o600 });
 
                 const known = new Set(scan.files.map((file) => file.path));
                 const unknownNotes = (args.fileNotes ?? [])
@@ -1827,7 +1830,8 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 return { output: [{ type: "text" as const, text: lines.join("\n") }] };
             },
         }),
-        { annotations: { readOnlyHint: true } },
+        // It writes a report file, so plan mode must not run it.
+        { annotations: { readOnlyHint: false } },
     );
 
     web.client("change-atlas", { access: "owner" });
