@@ -4,8 +4,8 @@
  */
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { mkdir, open, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, posix, resolve } from "node:path";
+import { mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
+import { dirname, join, posix, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
@@ -949,8 +949,25 @@ async function dependencyChanges(root: string, base: string, head: string, files
     return changes;
 }
 
+/**
+ * Pi chooses the repository, and anyone who can steer a session can make Pi choose. So the tools map only the
+ * repository that holds the session's folder, or one inside that folder. Links are resolved first.
+ */
+async function assertInSession(root: string, session: string) {
+    const [repo, folder] = await Promise.all([realpath(root), realpath(session)]);
+    const holds = (outer: string, inner: string) =>
+        inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
+
+    if (!holds(repo, folder) && !holds(folder, repo)) {
+        throw new Error(
+            `Change Atlas maps only the repository of the session folder (${folder}), or one inside it. ${repo} is somewhere else. Start a session in that repository.`,
+        );
+    }
+}
+
 async function scanRepo(
     cwd: string,
+    session: string,
     target: string,
     baseArg?: string,
     headArg?: string,
@@ -960,6 +977,9 @@ async function scanRepo(
             throw new Error(`${cwd} is not in a git repository. Give repo: the folder of one.`);
         })
     ).trim();
+
+    await assertInSession(root, session);
+
     const resolved = await resolveTarget(root, target, baseArg, headArg);
     const { base, head } = resolved;
     const range = head === WORKTREE ? [base] : [base, head];
@@ -1523,14 +1543,15 @@ const STATUS_HINT = "added, changed, removed, or unchanged";
 export default function createChangeAtlas(host: Host, web: Web) {
     const outDir = join(host.dataDir, "change-atlas");
 
-    const repoFolder = async (
+    /** The folder to scan, and the session's folder, which the repository must hold or be in. */
+    const folders = async (
         api: { agent(context: unknown): Promise<{ cwd?: string }> },
         context: unknown,
         repo?: string,
     ) => {
-        const cwd = (await api.agent(context)).cwd ?? process.cwd();
+        const session = (await api.agent(context)).cwd ?? process.cwd();
 
-        return repo ? resolve(cwd, expandHome(repo)) : cwd;
+        return { session, folder: repo ? resolve(session, expandHome(repo)) : session };
     };
 
     const scanTool = Object.assign(
@@ -1547,16 +1568,15 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 ),
                 repo: Type.Optional(
                     Type.String({
-                        description: "The repository folder. Default: the session folder",
+                        description:
+                            "The repository folder, in the session folder. Default: the session folder",
                     }),
                 ),
             }),
             replay: "safe",
             execute: async (args, api, context) => {
-                const scan = await scanRepo(
-                    await repoFolder(api as never, context, args.repo),
-                    args.target ?? "",
-                );
+                const { folder, session } = await folders(api as never, context, args.repo);
+                const scan = await scanRepo(folder, session, args.target ?? "");
 
                 if (scan.files.length === 0) {
                     return {
@@ -1723,8 +1743,10 @@ export default function createChangeAtlas(host: Host, web: Web) {
             // The file name comes from the call, so a second run writes the same file again.
             replay: "safe",
             execute: async (args, api, context) => {
+                const { folder, session } = await folders(api as never, context, args.repo);
                 const scan = await scanRepo(
-                    await repoFolder(api as never, context, args.repo),
+                    folder,
+                    session,
                     args.target ?? "",
                     args.base,
                     args.head,
