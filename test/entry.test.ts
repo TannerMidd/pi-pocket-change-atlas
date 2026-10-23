@@ -53,7 +53,7 @@ test("the gallery entry agrees with the module", async () => {
     assert.equal(entry.description, description);
     assert.equal(entry.pocketApi, Number(/export const pocketApi = (\d+);/.exec(source)![1]));
     assert.deepEqual(entry.declares.tools, ["change_atlas_scan", "change_atlas_publish"]);
-    assert.deepEqual(entry.declares.readOnlyTools, ["change_atlas_scan"]);
+    assert.deepEqual(entry.declares.readOnlyTools, []);
     assert.equal(entry.declares.client, "owner");
     assert.equal(entry.declares.access, "owner");
     assert.deepEqual(entry.declares.routes, []);

@@ -66,23 +66,30 @@ A target is one of these:
 
 **Runs** (always with argument lists, never through a shell)
 
-- `git`, in the repository. A ref that starts with `-` is refused.
-- For a pull request: `gh pr view <number>` (with `--repo <owner>/<repo>` for a URL), and `git fetch`
-  of `pull/<number>/head` and of the base branch from `origin` (or from the URL's repository). This
-  adds the PR's commits to the repository's git objects, and writes `FETCH_HEAD`. It changes no branch and no file of the work
-  tree.
+- `git`, in the repository, and `gh`. A ref that starts with `-` is refused. A repository's own config
+  is not trusted: every call gets settings that switch off the programs that a config can name
+  (`core.fsmonitor`, hooks, pager, `sshCommand`, credential helpers, and the `ext:` and `file:`
+  protocols), and variables such as `GIT_EXTERNAL_DIFF` are removed.
+- For a pull request: `gh pr view <number>` (with `--repo <owner>/<repo>` for a URL), then `git fetch`
+  over HTTPS from `https://github.com/<owner>/<repo>.git`, the repository that GitHub names for the
+  PR. It never fetches from `origin`. The tool refuses a PR that is not on github.com. The fetch runs
+  in a bare repository of its own, in `change-atlas/git/` in the data folder, with no config and with
+  `gh auth git-credential` as the only credential helper. It adds no object, ref, or `FETCH_HEAD` to
+  the repository that you map.
 
 **Writes**
 
 - One HTML report for each call of `change_atlas_publish`, in `change-atlas/` in Pi Pocket's data
-  folder. The file name has only `a-z`, `0-9`, and `-`. The file and the folder are readable by the
-  owner's user only. Nothing deletes old reports.
+  folder. The file name has only `a-z`, `0-9`, and `-`. The file and the folder are made readable by
+  the owner's user only (also when they existed before).
+- The commits of the PRs that it fetched, in `change-atlas/git/` in the data folder (one bare
+  repository for each mapped repository). Nothing deletes old reports or this cache.
 
 **Sends**
 
-- To GitHub: only the `gh` and `git fetch` calls above, for a pull request. They use your own `gh` and
-  Git sign-in. The tools pass the server's environment to these two programs, as any program that you
-  start does.
+- To GitHub: only the `gh` and `git fetch` calls above, for a pull request, and only over HTTPS to
+  github.com. They use your own `gh` sign-in. The tools pass the server's environment to these two
+  programs, as any program that you start does.
 - To the model provider: every tool result, as for every tool. That is the file list, the commit
   subjects, the PR title and the start of its body, the names of packages that changed, and about 14,000
   characters of changed lines. Text from the repository is quoted and fenced as data.
@@ -101,15 +108,14 @@ folders are listed but their lines are left out.
 
 ## What it installs
 
-| Part                        | What                                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------- |
-| Extension `change-atlas`    | Two tools: `change_atlas_scan` (read-only) and `change_atlas_publish` (writes a file) |
-| Browser module (owner only) | Names the two tools' calls in the session, and adds the launcher action               |
-| Routes, hooks, commands     | None                                                                                  |
+| Part                        | What                                                                    |
+| --------------------------- | ----------------------------------------------------------------------- |
+| Extension `change-atlas`    | Two tools: `change_atlas_scan` and `change_atlas_publish`               |
+| Browser module (owner only) | Names the two tools' calls in the session, and adds the launcher action |
+| Routes, hooks, commands     | None                                                                    |
 
-`change_atlas_scan` has `readOnlyHint: true`: it changes no file and no branch. For a pull request it
-adds objects to the repository's `.git` (see "Runs"). `change_atlas_publish` writes a file, so plan
-mode does not run it.
+Neither tool has `readOnlyHint`: a PR scan fetches from GitHub and writes to the cache, and the
+publish tool writes a report. Plan mode does not run them.
 
 ## Limits
 

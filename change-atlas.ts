@@ -5,7 +5,8 @@
  * and `change_atlas_publish` writes the report page, with a story that Pi writes in ASD-STE100. The tools map only
  * the repository that holds the session's folder, or one inside it. A diff can hold a secret: the tools do not
  * look for secrets, so the scan's excerpts reach the model provider as they are, and the report file keeps the diffs
- * until someone deletes it. The report page runs its own script only, under a content security policy that blocks
+ * until someone deletes it. The commits of a fetched PR stay in `change-atlas/git/` in the data folder, never in the
+ * repository. The report page runs its own script only, under a content security policy that blocks
  * every network request. The browser module (owner only) adds a launcher action and names the two tools' calls.
  */
 import { execFile } from "node:child_process";
@@ -1730,7 +1731,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
         defineTool({
             name: "change_atlas_scan",
             description:
-                "Step 1 of a Change Atlas, a visual report of code changes. Reads a PR, branch, commit range, or local changes with git, and lists files, commits, components, import links, and diff excerpts. For a PR it also runs gh and git fetch (they contact GitHub) and adds the PR commits to the git objects of the repository. It maps only the repository of the session folder. Then call change_atlas_publish.",
+                "Step 1 of a Change Atlas, a visual report of code changes. Reads a PR, branch, commit range, or local changes with git, and lists files, commits, components, import links, and diff excerpts. For a PR it also runs gh and git fetch over HTTPS (they contact GitHub) and keeps the PR commits in a cache in the data folder. It changes no file of the repository. It maps only the repository of the session folder. Then call change_atlas_publish.",
             parameters: Type.Object({
                 target: Type.Optional(
                     Type.String({
@@ -1766,9 +1767,8 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 };
             },
         }),
-        // It changes no file and no branch. For a pull request it fetches the PR's commits into the
-        // repository's object store; the description says so.
-        { annotations: { readOnlyHint: true } },
+        // A PR scan fetches from GitHub and writes to this module's data folder, so plan mode must not run it.
+        { annotations: { readOnlyHint: false } },
     );
 
     const publishTool = Object.assign(

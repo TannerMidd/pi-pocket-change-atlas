@@ -7,11 +7,14 @@ import { git, harness, repo } from "./harness.ts";
 
 const story = { title: "T", summary: ["It adds a file."] };
 
-test("only the scan tool is read-only: the publish tool writes a file", async () => {
+test("no tool is read-only: the scan can fetch from GitHub, and the publish tool writes a file", async () => {
     const atlas = await harness(await repo());
 
-    assert.equal(atlas.tools.get("change_atlas_scan")!.annotations?.readOnlyHint, true);
-    assert.notEqual(atlas.tools.get("change_atlas_publish")!.annotations?.readOnlyHint, true);
+    assert.equal(atlas.tools.size, 2);
+
+    for (const tool of atlas.tools.values()) {
+        assert.notEqual(tool.annotations?.readOnlyHint, true, tool.name);
+    }
 });
 
 test("a report goes to change-atlas/ in the data folder, readable by its owner only", async () => {
