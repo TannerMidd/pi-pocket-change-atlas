@@ -24,8 +24,8 @@ test("it maps local changes, a commit, and a range", async () => {
     const local = await atlas.call("change_atlas_scan", {});
 
     assert.match(local, /Local changes on main/);
-    assert.match(local, /M \+1 −0 a\.txt/);
-    assert.match(local, /A \+1 −0 new\.txt/);
+    assert.match(local, /M \+1 −0 Q\[a\.txt\]/);
+    assert.match(local, /A \+1 −0 Q\[new\.txt\]/);
 
     git(dir, "add", "-A");
     git(dir, "commit", "-qm", "second");
@@ -33,7 +33,10 @@ test("it maps local changes, a commit, and a range", async () => {
     assert.match(await atlas.call("change_atlas_scan", { target: "HEAD" }), /Commit HEAD/);
     assert.match(await atlas.call("change_atlas_scan", { target: "HEAD~1..HEAD" }), /new\.txt/);
     assert.match(await atlas.call("change_atlas_scan", { target: "HEAD~1...HEAD" }), /new\.txt/);
-    assert.match(await atlas.call("change_atlas_scan", { target: "local" }), /No changes in Local/);
+    assert.match(
+        await atlas.call("change_atlas_scan", { target: "local" }),
+        /No changes in Q\[Local/,
+    );
 });
 
 test("a ref that starts with - never reaches Git as an option", async () => {

@@ -1404,11 +1404,14 @@ async function renderReport(scan: Scan, story: Narrative, ste: ReturnType<typeof
 // ── Scan text for Pi ────────────────────────────────────────────────────────────────────────────
 
 function scanText(host: Host, scan: Scan) {
+    // File names, branch names, and package names come from the repository, and a file name can hold any
+    // character, a line break too. Each one is quoted, so none of them can close the <repo-data> fence.
+    const q = (text: string) => host.text.quoted(text, 300);
     const adds = scan.files.reduce((sum, file) => sum + file.additions, 0);
     const dels = scan.files.reduce((sum, file) => sum + file.deletions, 0);
     const lines: string[] = [
-        `Change Atlas scan of ${scan.repoName}: ${scan.label}`,
-        `repo: ${scan.root}`,
+        `Change Atlas scan of ${q(scan.repoName)}: ${q(scan.label)}`,
+        `repo: ${q(scan.root)}`,
         `base: ${scan.base}  head: ${scan.head}  (pass these to change_atlas_publish)`,
         `${scan.files.length} files, +${adds} −${dels}, ${scan.commits.length} commits${scan.skippedFiles ? `, ${scan.skippedFiles} more files not listed` : ""}`,
         "",
@@ -1418,7 +1421,7 @@ function scanText(host: Host, scan: Scan) {
 
     if (scan.pr) {
         lines.push(
-            `PR title: ${host.text.quoted(scan.pr.title, 200)}  author: ${scan.pr.author}  ${scan.pr.url}`,
+            `PR title: ${host.text.quoted(scan.pr.title, 200)}  author: ${q(scan.pr.author)}  ${q(scan.pr.url)}`,
         );
 
         if (scan.pr.body.trim()) {
@@ -1438,21 +1441,21 @@ function scanText(host: Host, scan: Scan) {
 
     for (const file of scan.files.slice(0, 200)) {
         lines.push(
-            `  ${file.status[0].toUpperCase()} +${file.additions} −${file.deletions} ${file.oldPath ? `${file.oldPath} → ` : ""}${file.path}${file.generated ? " (generated)" : ""}${file.binary ? " (binary)" : ""}`,
+            `  ${file.status[0].toUpperCase()} +${file.additions} −${file.deletions} ${file.oldPath ? `${q(file.oldPath)} → ` : ""}${q(file.path)}${file.generated ? " (generated)" : ""}${file.binary ? " (binary)" : ""}`,
         );
     }
 
     lines.push("", "Auto components (dir · layer · status):");
 
     for (const part of scan.auto.components) {
-        lines.push(`  ${part.id} · ${part.layer} · ${part.status}`);
+        lines.push(`  ${q(part.id)} · ${part.layer} · ${part.status}`);
     }
 
     if (scan.auto.links.length) {
         lines.push("", "Import links that changed (from → to):");
 
         for (const link of scan.auto.links) {
-            lines.push(`  ${link.from} → ${link.to} (${link.status})`);
+            lines.push(`  ${q(link.from)} → ${q(link.to)} (${link.status})`);
         }
     }
 
@@ -1461,7 +1464,7 @@ function scanText(host: Host, scan: Scan) {
 
         for (const dep of scan.dependencies) {
             lines.push(
-                `  ${dep.file} ${dep.group} ${dep.name}: ${dep.before ?? "(none)"} → ${dep.after ?? "(removed)"}`,
+                `  ${q(dep.file)} ${dep.group} ${q(dep.name)}: ${dep.before === undefined ? "(none)" : q(dep.before)} → ${dep.after === undefined ? "(removed)" : q(dep.after)}`,
             );
         }
     }
@@ -1470,7 +1473,9 @@ function scanText(host: Host, scan: Scan) {
         lines.push("", "Outside packages imported or dropped:");
 
         for (const entry of scan.externalImports.slice(0, 40)) {
-            lines.push(`  ${entry.change} ${entry.name} (${entry.files.slice(0, 3).join(", ")})`);
+            lines.push(
+                `  ${entry.change} ${q(entry.name)} (${entry.files.slice(0, 3).map(q).join(", ")})`,
+            );
         }
     }
 
@@ -1490,7 +1495,7 @@ function scanText(host: Host, scan: Scan) {
             .slice(0, 40)
             .map((line) => `${line[0]}${line[3].slice(0, 160)}`)
             .join("\n");
-        const text = `--- ${file.path}\n${changed}`;
+        const text = `--- ${q(file.path)}\n${changed}`;
 
         lines.push(host.text.defang(text.slice(0, budget)));
         budget -= text.length;
@@ -1504,7 +1509,7 @@ function scanText(host: Host, scan: Scan) {
 
     lines.push(
         "",
-        `Next: read what you need (\`${diffCmd} -- <path>\` in ${scan.root}). Then call change_atlas_publish with base, head, and the story in ASD-STE100.`,
+        `Next: read what you need (\`${diffCmd} -- <path>\` in ${q(scan.root)}). Then call change_atlas_publish with base, head, and the story in ASD-STE100.`,
     );
 
     return lines.join("\n");
@@ -1558,7 +1563,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
                         output: [
                             {
                                 type: "text" as const,
-                                text: `No changes in ${scan.label} (${scan.base.slice(0, 10)} → ${scan.head.slice(0, 10)}).`,
+                                text: `No changes in ${host.text.quoted(scan.label, 200)} (${scan.base.slice(0, 10)} → ${scan.head.slice(0, 10)}).`,
                             },
                         ],
                     };
@@ -1782,7 +1787,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
                         lines.push(
                             `${loose.length} files fit no area and show as "Other changes": ${loose
                                 .slice(0, 12)
-                                .map((file) => file.path)
+                                .map((file) => host.text.quoted(file.path, 200))
                                 .join(", ")}${loose.length > 12 ? ", …" : ""}`,
                         );
                     }
@@ -1790,7 +1795,10 @@ export default function createChangeAtlas(host: Host, web: Web) {
 
                 if (unknownNotes.length) {
                     lines.push(
-                        `These fileNotes name no changed file: ${unknownNotes.slice(0, 10).join(", ")}`,
+                        `These fileNotes name no changed file: ${unknownNotes
+                            .slice(0, 10)
+                            .map((path) => host.text.quoted(path, 200))
+                            .join(", ")}`,
                     );
                 }
 
