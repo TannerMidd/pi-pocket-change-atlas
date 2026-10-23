@@ -1,7 +1,7 @@
 {
     "name": "change-atlas",
     "title": "Change Atlas",
-    "description": "Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads the git repository of the session's folder with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.",
+    "description": "Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads a git repository (the session's folder, or the folder that Pi names) with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports and fetched PR commits to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.",
     "tags": ["review", "git", "pull-request", "diff", "visualization", "report", "ste"],
     "author": {
         "name": "Tanner Middleton",
@@ -16,8 +16,8 @@
     "files": [
         {
             "name": "change-atlas.ts",
-            "sha256": "2cca92aae84c83763ef11298496fa9addf9369092d073b74f09a99990507a361",
-            "size": 64577
+            "sha256": "f47d4e6c89cd498df55c18f9cd8932a3976f3b8577e9ec223a126c5bea77167e",
+            "size": 68643
         },
         {
             "name": "change-atlas/index.js",
@@ -40,7 +40,7 @@
     "declares": {
         "extensions": ["change-atlas"],
         "tools": ["change_atlas_scan", "change_atlas_publish"],
-        "readOnlyTools": ["change_atlas_scan"],
+        "readOnlyTools": [],
         "hooks": [],
         "sections": [],
         "wraps": [],

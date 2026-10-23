@@ -1,5 +1,5 @@
 /**
- * Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads a git repository (the session's folder, or the folder that Pi names) with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.
+ * Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads a git repository (the session's folder, or the folder that Pi names) with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports and fetched PR commits to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.
  *
  * Two tools: `change_atlas_scan` reads the repository (the file list, commits, import links, and short diff excerpts)
  * and `change_atlas_publish` writes the report page, with a story that Pi writes in ASD-STE100. Pi can name any
