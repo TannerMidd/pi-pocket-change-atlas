@@ -1941,7 +1941,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
                     .map((note) => note.path);
                 const lines = [
                     `Wrote the Change Atlas: ${path} (${Math.round(html.length / 1024)} KB, ${scan.files.length} files).`,
-                    `Publish it now: call artifact with path "${path}", title "${args.title.replace(/"/g, "'").slice(0, 60)}", and id "change-atlas-${slug.slice(0, 40).replace(/-+$/, "")}".`,
+                    `Publish it now: call artifact with path "${path}", the title that you gave (60 characters at most), and id "change-atlas-${slug.slice(0, 40).replace(/-+$/, "")}".`,
                     `STE check: ${ste.score}% of ${ste.sentences} sentences pass.`,
                 ];
 
@@ -1951,7 +1951,8 @@ export default function createChangeAtlas(host: Host, web: Web) {
                         ...ste.issues
                             .slice(0, 15)
                             .map(
-                                (issue) => `  [${issue.where}] "${issue.text}" — ${issue.problem}`,
+                                (issue) =>
+                                    `  ${host.text.quoted(`[${issue.where}] ${issue.text}`, 300)} — ${issue.problem}`,
                             ),
                     );
                 }
