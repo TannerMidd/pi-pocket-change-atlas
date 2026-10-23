@@ -1,6 +1,12 @@
 /**
- * Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report, with its story written in ASD-STE100.
- * It reads the repository with `git` (and `gh` for pull requests), writes reports to `change-atlas/` in the data folder, and sends nothing elsewhere.
+ * Change Atlas: Pi maps a pull request, branch, commit range, or local changes into an interactive visual report. It reads the git repository of the session's folder with `git` (for a pull request also `gh` and `git fetch`, which contact GitHub), and writes reports to `change-atlas/` in the data folder. Diff excerpts go to the model provider, and a published report goes to everyone who sees the session. It sends nothing to any other host.
+ *
+ * Two tools: `change_atlas_scan` reads the repository (the file list, commits, import links, and short diff excerpts)
+ * and `change_atlas_publish` writes the report page, with a story that Pi writes in ASD-STE100. The tools map only
+ * the repository that holds the session's folder, or one inside it. A diff can hold a secret: the tools do not
+ * look for secrets, so the scan's excerpts reach the model provider as they are, and the report file keeps the diffs
+ * until someone deletes it. The report page runs its own script only, under a content security policy that blocks
+ * every network request. The browser module (owner only) adds a launcher action and names the two tools' calls.
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -1613,7 +1619,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
         defineTool({
             name: "change_atlas_scan",
             description:
-                "Step 1 of a Change Atlas, a visual report of code changes. Reads a PR, branch, commit range, or local changes with git, and lists files, commits, components, import links, and diff excerpts. Then call change_atlas_publish.",
+                "Step 1 of a Change Atlas, a visual report of code changes. Reads a PR, branch, commit range, or local changes with git, and lists files, commits, components, import links, and diff excerpts. For a PR it also runs gh and git fetch (they contact GitHub) and adds the PR commits to the git objects of the repository. It maps only the repository of the session folder. Then call change_atlas_publish.",
             parameters: Type.Object({
                 target: Type.Optional(
                     Type.String({
