@@ -10,7 +10,7 @@
  * every network request. The browser module (owner only) adds a launcher action and names the two tools' calls.
  */
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import {
     chmod,
@@ -20,7 +20,8 @@ import {
     readFile,
     readlink,
     realpath,
-    writeFile,
+    rename,
+    rm,
 } from "node:fs/promises";
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import { homedir } from "node:os";
@@ -1735,6 +1736,43 @@ function scanText(host: Host, scan: Scan) {
     return lines.join("\n");
 }
 
+/**
+ * Writes a report so that nothing which is already there is followed. The folder must be a real folder (not a link). The
+ * page goes to a new file, made for this (`wx`: it must not exist, and it is not a link), with mode 0600 set through its
+ * handle, and then `rename` puts it over the report's name: a rename replaces a link, and does not write to its target.
+ */
+async function writeReport(path: string, html: string) {
+    const folder = dirname(path);
+
+    await mkdir(folder, { recursive: true, mode: 0o700 });
+
+    if (!(await lstat(folder)).isDirectory()) {
+        throw new Error(`${shown(folder)} is not a folder (it can be a link). Move it away.`);
+    }
+
+    // The mode counts only for what is new, so an old folder is changed too.
+    await chmod(folder, 0o700);
+
+    const temporary = join(folder, `.${basename(path)}.${randomBytes(8).toString("hex")}.tmp`);
+    const handle = await open(
+        temporary,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+    );
+
+    try {
+        await handle.writeFile(html, "utf8");
+        await handle.chmod(0o600);
+        await handle.close();
+        await rename(temporary, path);
+    } catch (error) {
+        await handle.close().catch(() => undefined);
+        await rm(temporary, { force: true });
+
+        throw error;
+    }
+}
+
 // ── Tools ───────────────────────────────────────────────────────────────────────────────────────
 
 const Ste = (description: string) => Type.String({ description: `${description} (ASD-STE100)` });
@@ -1976,11 +2014,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 const path = join(outDir, `${slug}-${key}.html`);
 
                 // A report holds code from the repository, and it can hold a secret. Only the owner's user reads it.
-                // The modes count only for what is new, so an old folder or file is changed too.
-                await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-                await chmod(dirname(path), 0o700);
-                await writeFile(path, html, { encoding: "utf8", mode: 0o600 });
-                await chmod(path, 0o600);
+                await writeReport(path, html);
 
                 const known = new Set(scan.files.map((file) => file.path));
                 const unknownNotes = (args.fileNotes ?? [])

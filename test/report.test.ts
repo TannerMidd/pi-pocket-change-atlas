@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+    chmod,
+    lstat,
+    mkdir,
+    readdir,
+    readFile,
+    rm,
+    stat,
+    symlink,
+    writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
-import { git, harness, repo } from "./harness.ts";
+import { git, harness, repo, temp } from "./harness.ts";
 
 const story = { title: "T", summary: ["It adds a file."] };
 
@@ -173,4 +183,45 @@ test("a report folder and a report file that are open to others are closed again
     await atlas.call("change_atlas_publish", args);
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.equal((await stat(dirname(path))).mode & 0o777, 0o700);
+});
+
+test("a report path that became a link is replaced, and its target is not written", async () => {
+    const dir = await repo();
+    const atlas = await harness(dir);
+    const args = { base: "HEAD", head: "WORKTREE", ...story };
+    const made = await atlas.call("change_atlas_publish", args);
+    const path = /Wrote the Change Atlas: (\S+\.html)/.exec(made)![1]!;
+    const target = join(await temp("target"), "precious.txt");
+
+    await writeFile(target, "PRECIOUS", { mode: 0o644 });
+    await chmod(target, 0o644);
+    await rm(path);
+    await symlink(target, path);
+    await atlas.call("change_atlas_publish", args);
+
+    assert.equal(await readFile(target, "utf8"), "PRECIOUS");
+    assert.equal((await stat(target)).mode & 0o777, 0o644);
+    assert.equal((await lstat(path)).isSymbolicLink(), false);
+    assert.equal((await lstat(path)).isFile(), true);
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.match(await readFile(path, "utf8"), /^<!doctype html>/);
+    // No temporary file stays.
+    assert.deepEqual(await readdir(dirname(path)), [basename(path)]);
+});
+
+test("a report folder that is a link is refused, and its target is not changed", async () => {
+    const dir = await repo();
+    const atlas = await harness(dir);
+    const away = await temp("away");
+
+    await chmod(away, 0o755);
+    await symlink(away, join(atlas.dataDir, "change-atlas"));
+
+    await atlas.fails(
+        "change_atlas_publish",
+        { base: "HEAD", head: "WORKTREE", ...story },
+        /is not a folder/,
+    );
+    assert.equal((await stat(away)).mode & 0o777, 0o755);
+    assert.deepEqual(await readdir(away), []);
 });
