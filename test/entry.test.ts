@@ -58,6 +58,8 @@ test("the gallery entry agrees with the module", async () => {
     assert.equal(entry.declares.access, "owner");
     assert.deepEqual(entry.declares.routes, []);
     assert.deepEqual(entry.declares.hooks, []);
+    assert.deepEqual(entry.declares.wraps, ["tool artifact_inline"]);
+    assert.deepEqual(entry.declares.commands, ["global change-atlas-display"]);
     assert.equal(entry.source.repo, "TannerMidd/pi-pocket-change-atlas");
     assert.match(entry.source.commit, /^([0-9a-f]{40}|TO_FILL)$/);
 });
