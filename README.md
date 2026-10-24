@@ -39,7 +39,23 @@ message box. Pi then does two steps:
 1. `change_atlas_scan` reads the repository and gives Pi the file list, the commits, the import links,
    and short diff excerpts.
 2. `change_atlas_publish` takes Pi's story, builds the report page, and gives back its path. Pi then
-   publishes the page with the `artifact` tool, so it opens in Pi Pocket's viewer.
+   publishes the page from that path: with `artifact_inline`, as a card in its reply (press **Run** on
+   the card to open the report), or with `artifact`, in Pi Pocket's viewer.
+
+### Inline or viewer
+
+Reports show inline by default. To choose, type `/change-atlas-display inline` or
+`/change-atlas-display viewer` (owner only; it counts for every session). `/change-atlas-display`
+alone says which one is set. The choice is saved in `change-atlas/settings.json` in the data folder.
+Pi can still pick the other one for one report when you ask it to.
+
+For the card, the module wraps Pi Pocket's `artifact_inline` tool so that it also takes a `path`: only
+an `.html` file in `change-atlas/` in the data folder, where `change_atlas_publish` writes its reports
+(one name only, opened through the held folder, up to 2 MB). That needs Linux (`/proc/self/fd`);
+on other systems reports go to the viewer. A report is too large for Pi to send as content. Every
+other call of the tool works as before. Pi Pocket's own guide still says that `artifact_inline` takes
+no path; the tool's description and the result of `change_atlas_publish` tell Pi to give one. A
+session without `artifact_inline`, such as PiP's, gets the viewer.
 
 A target is one of these:
 
@@ -88,6 +104,8 @@ A target is one of these:
   the owner's user only (also when they existed before).
 - The commits of the PRs that it fetched, in `change-atlas/git/` in the data folder (one bare
   repository for each mapped repository). Nothing deletes old reports or this cache.
+- `change-atlas/settings.json` in the data folder, when the owner runs `/change-atlas-display`: where
+  reports show (`inline` or `viewer`). Readable by the owner's user only.
 
 **Sends**
 
@@ -97,7 +115,7 @@ A target is one of these:
 - To the model provider: every tool result, as for every tool. That is the file list, the commit
   subjects, the PR title and the start of its body, the names of packages that changed, and about 14,000
   characters of changed lines. Text from the repository is quoted and fenced as data.
-- To everyone who sees the session: the report, when Pi publishes it with the `artifact` tool. It has
+- To everyone who sees the session: the report, when Pi publishes it with the `artifact` or `artifact_inline` tool. It has
   the diffs of up to 800 files (up to 1,500 lines for each file).
 - Nowhere else. The code has no other network call. The report page has none either: its content
   security policy allows only its own script, and no request to any address.
@@ -115,8 +133,10 @@ folders are listed but their lines are left out.
 | Part                        | What                                                                    |
 | --------------------------- | ----------------------------------------------------------------------- |
 | Extension `change-atlas`    | Two tools: `change_atlas_scan` and `change_atlas_publish`               |
+| Wrap                        | `artifact_inline` also takes the path of a Change Atlas report          |
+| Command (owner only)        | `/change-atlas-display [inline\|viewer]`: where reports show            |
 | Browser module (owner only) | Names the two tools' calls in the session, and adds the launcher action |
-| Routes, hooks, commands     | None                                                                    |
+| Routes, hooks               | None                                                                    |
 
 Neither tool has `readOnlyHint`: a PR scan fetches from GitHub and writes to the cache, and the
 publish tool writes a report. Plan mode does not run them.

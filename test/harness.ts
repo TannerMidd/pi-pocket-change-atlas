@@ -105,15 +105,31 @@ exec '${real}' "$@"
     };
 }
 
-export async function harness(cwd: string, options: { dataDir?: string } = {}) {
+/** `artifact_inline` with this module's wrap: it takes a path. */
+export const INLINE_TOOL = {
+    name: "artifact_inline",
+    parameters: { properties: { id: {}, title: {}, content: {}, path: {}, edits: {} } },
+};
+
+type Command = {
+    scope: string;
+    handler(args: string, ctx: unknown): Promise<{ type: string; message?: string }>;
+};
+
+export async function harness(
+    cwd: string,
+    options: { dataDir?: string; tools?: { name: string; parameters?: object }[] } = {},
+) {
     const dataDir = options.dataDir ?? (await temp("data"));
     const clients: [string, unknown][] = [];
     const routes: string[] = [];
+    const commands = new Map<string, Command>();
     const web = {
         client: (name: string, spec: unknown) => clients.push([name, spec]),
         route: (method: string, path: string) => routes.push(`${method} ${path}`),
         conversationRoute: (method: string, path: string) => routes.push(`${method} ${path}`),
-        command: () => routes.push("command"),
+        command: (name: string, command: Command) => commands.set(name, command),
+        error: (status: number, message: string) => Object.assign(new Error(message), { status }),
         send: () => undefined,
         onDispose: () => undefined,
     };
@@ -123,9 +139,14 @@ export async function harness(cwd: string, options: { dataDir?: string } = {}) {
     )) as unknown as {
         name: string;
         tools: Tool[];
+        wraps: unknown[];
     };
     const tools = new Map(extension.tools.map((tool) => [tool.name, tool]));
-    const api = { agent: async () => ({ cwd }), taskId: "task-1", callId: "call-1" };
+    const api = {
+        agent: async () => ({ cwd, tools: options.tools ?? [INLINE_TOOL], deferred: [] }),
+        taskId: "task-1",
+        callId: "call-1",
+    };
     const call = async (name: string, args: object) => {
         const result = await tools.get(name)!.execute(args, api, {});
 
@@ -135,5 +156,5 @@ export async function harness(cwd: string, options: { dataDir?: string } = {}) {
         await assert.rejects(call(name, args), pattern);
     };
 
-    return { dataDir, extension, tools, clients, routes, call, fails };
+    return { dataDir, extension, tools, clients, routes, commands, call, fails };
 }

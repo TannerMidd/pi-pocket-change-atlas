@@ -15,39 +15,39 @@
         unchanged: "var(--unch)",
     };
     const STATUS_HEX = {
-        added: "#2ea043",
-        deleted: "#da3633",
-        modified: "#c38410",
-        typechange: "#c38410",
-        renamed: "#8957e5",
-        copied: "#8957e5",
+        added: "#6cc070",
+        deleted: "#e8604c",
+        modified: "#d9a441",
+        typechange: "#d9a441",
+        renamed: "#a48be0",
+        copied: "#a48be0",
     };
     const KIND_COLOR = {
-        feature: "#4c9aff",
-        fix: "#f0883e",
-        refactor: "#b083f0",
-        test: "#3fb950",
-        docs: "#39c5cf",
-        config: "#8b98a8",
-        build: "#8b98a8",
-        style: "#db61a2",
-        perf: "#e3b341",
-        security: "#f85149",
-        chore: "#6e7a8a",
+        feature: "#6f9bd1",
+        fix: "#d98e5f",
+        refactor: "#a08bc9",
+        test: "#7fb07a",
+        docs: "#5fa8a2",
+        config: "#9a978e",
+        build: "#9a978e",
+        style: "#c97a8f",
+        perf: "#c9a24a",
+        security: "#e8604c",
+        chore: "#8a877f",
     };
     const PALETTE = [
-        "#4c9aff",
-        "#b083f0",
-        "#3fb950",
-        "#f0883e",
-        "#39c5cf",
-        "#db61a2",
-        "#e3b341",
-        "#ff7b72",
-        "#7ee787",
-        "#a5d6ff",
-        "#d2a8ff",
-        "#ffa657",
+        "#6f9bd1",
+        "#d98e5f",
+        "#7fb07a",
+        "#c9a24a",
+        "#a08bc9",
+        "#5fa8a2",
+        "#c97a8f",
+        "#8c9a6b",
+        "#b8865a",
+        "#7a9cb0",
+        "#b56a5a",
+        "#9db58a",
     ];
     const LETTER = {
         added: "A",
@@ -929,7 +929,7 @@
                         y: band.top,
                         width: width - 8,
                         height: band.bottom - band.top,
-                        rx: 14,
+                        rx: 0,
                     }),
                     svg("text", { class: "layer-label", x: 16, y: band.top + 18 }, band.name),
                 );
@@ -1056,7 +1056,7 @@
                             y: -4,
                             width: W + 8,
                             height: H + 8,
-                            rx: 15,
+                            rx: 2,
                             fill: "none",
                             stroke: color,
                             "stroke-width": 6,
@@ -1070,15 +1070,14 @@
                         class: "body",
                         width: W,
                         height: H,
-                        rx: 12,
+                        rx: 2,
                         stroke: color,
                     }),
                     svg("rect", {
                         x: 0,
-                        y: 10,
+                        y: 0,
                         width: 4,
-                        height: H - 20,
-                        rx: 2,
+                        height: H,
                         fill: color,
                     }),
                     svg("text", { x: 14, y: 25 }, clip(c.name, nameMax)),
@@ -1089,7 +1088,7 @@
                             ? `${c.files.length} file${c.files.length === 1 ? "" : "s"} · +${fmt(c.a)} −${fmt(c.d)}`
                             : c.status,
                     ),
-                    svg("circle", { cx: W - 14, cy: 14, r: 4.5, fill: color }),
+                    svg("rect", { x: W - 16, y: 10, width: 7, height: 7, fill: color }),
                     svg("title", {}, `${c.name} (${c.status})${c.summary ? "\n" + c.summary : ""}`),
                 );
 
@@ -1104,7 +1103,7 @@
                             y: H - 9,
                             width: span,
                             height: 3,
-                            rx: 1.5,
+                            rx: 0,
                             fill: "var(--line)",
                         }),
                         svg("rect", {
@@ -1112,7 +1111,7 @@
                             y: H - 9,
                             width: (span * c.a) / total,
                             height: 3,
-                            rx: 1.5,
+                            rx: 0,
                             fill: "var(--add)",
                         }),
                         svg("rect", {
@@ -1120,7 +1119,7 @@
                             y: H - 9,
                             width: (span * c.d) / total,
                             height: 3,
-                            rx: 1.5,
+                            rx: 0,
                             fill: "var(--del)",
                         }),
                     );
@@ -1453,15 +1452,15 @@
 
         function tileColor(f) {
             if (color === "status") {
-                return STATUS_HEX[f.status] || "#6e7a8a";
+                return STATUS_HEX[f.status] || "#9a978e";
             }
 
             const total = Math.max(1, churn(f));
             const share = f.additions / total;
             // Red (all removed) to green (all added) through slate.
             const mix = (a, b, t) => Math.round(a + (b - a) * t);
-            const from = share < 0.5 ? [218, 54, 51] : [90, 104, 122];
-            const to = share < 0.5 ? [90, 104, 122] : [46, 160, 67];
+            const from = share < 0.5 ? [232, 96, 76] : [154, 151, 142];
+            const to = share < 0.5 ? [154, 151, 142] : [108, 192, 112];
             const t = share < 0.5 ? share * 2 : (share - 0.5) * 2;
 
             return `rgb(${mix(from[0], to[0], t)},${mix(from[1], to[1], t)},${mix(from[2], to[2], t)})`;
@@ -1501,8 +1500,9 @@
                         top: r.y + "px",
                         width: Math.max(0, r.w) + "px",
                         height: Math.max(0, r.h) + "px",
-                        background: `color-mix(in srgb, ${g.item.color} 16%, var(--panel))`,
+                        background: `color-mix(in srgb, ${g.item.color} 7%, var(--panel))`,
                     },
+                    vars: { "--c": g.item.color },
                 });
 
                 if (header) {
@@ -1539,8 +1539,8 @@
                                     top: t.y + pad + "px",
                                     width: w + "px",
                                     height: h + "px",
-                                    background: tileColor(f),
                                 },
+                                vars: { "--c": tileColor(f) },
                                 on: { click: () => openFile(f.path) },
                             },
                             w > 44 && h > 18 ? el("b", {}, basename(f.path)) : null,
@@ -1569,19 +1569,19 @@
                     el(
                         "span",
                         {},
-                        el("i", { style: { background: "rgb(218,54,51)" } }),
+                        el("i", { style: { background: "rgb(232,96,76)" } }),
                         "only removed",
                     ),
                     el(
                         "span",
                         {},
-                        el("i", { style: { background: "rgb(90,104,122)" } }),
+                        el("i", { style: { background: "rgb(154,151,142)" } }),
                         "balanced",
                     ),
                     el(
                         "span",
                         {},
-                        el("i", { style: { background: "rgb(46,160,67)" } }),
+                        el("i", { style: { background: "rgb(108,192,112)" } }),
                         "only added",
                     ),
                 );
@@ -2510,7 +2510,7 @@
                 fill: "none",
                 stroke: tone,
                 "stroke-width": 8,
-                "stroke-linecap": "round",
+                "stroke-linecap": "butt",
                 "stroke-dasharray": `${(length * ste.score) / 100} ${length}`,
                 transform: "rotate(-90 44 44)",
             }),

@@ -8,6 +8,9 @@
  * until someone deletes it. The commits of a fetched PR stay in `change-atlas/git/` in the data folder, never in the
  * repository. The report page runs its own script only, under a content security policy that blocks
  * every network request. The browser module (owner only) adds a launcher action and names the two tools' calls.
+ * The owner's `/change-atlas-display` command saves where Pi publishes a report: inline, as a card in its reply
+ * (the default), or in the artifact viewer. For the card, the module wraps `artifact_inline` so that it also takes the
+ * path of one of the module's own reports, which are too large for Pi to send as content.
  */
 import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -26,7 +29,7 @@ import {
 import { basename, dirname, join, posix, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { Type } from "@earendil-works/pi-ai";
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { defineExtension, defineTool, wrapTool } from "@earendil-works/pi-durable";
 import type { Host, Web } from "./_pocket.d.ts";
 
 export const pocketApi = 2;
@@ -1562,6 +1565,88 @@ function escapeHtml(text: string) {
     return text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
+/** The most files that the static summary lists. The interactive report lists all of them. */
+const STATIC_FILES = 40;
+
+/**
+ * The report's first view as plain HTML, for a page with no scripts: a reply card's preview, before Run. The script
+ * replaces it with the interactive report. It uses the report's own classes, so it looks the same.
+ */
+function staticReport(scan: Scan, story: Narrative, ste: ReturnType<typeof checkSte>) {
+    const e = escapeHtml;
+    const count = (n: number) => n.toLocaleString("en-US");
+    const adds = scan.files.reduce((sum, file) => sum + file.additions, 0);
+    const dels = scan.files.reduce((sum, file) => sum + file.deletions, 0);
+    const kpi = (value: string, label: string, cls = "") =>
+        `<div class="kpi ${cls}"><div class="v">${e(value)}</div><div class="k">${e(label)}</div></div>`;
+    const sign = {
+        added: "A",
+        modified: "M",
+        deleted: "D",
+        renamed: "R",
+        copied: "C",
+        typechange: "T",
+    };
+    const parts = [
+        `<header class="hero"><div class="hero-inner">`,
+        `<div class="eyebrow"><span class="chip brand">◆ Change Atlas</span><span class="chip"><b>${e(scan.repoName)}</b></span><span class="chip">${e(scan.label)}</span></div>`,
+        `<h1>${e(story.title)}</h1>`,
+        `<ul class="summary">${story.summary.map((line) => `<li>${e(line)}</li>`).join("")}</ul>`,
+        story.intent ? `<p class="intent"><b>Why</b>${e(story.intent)}</p>` : "",
+        `<div class="kpis">`,
+        kpi(count(scan.files.length), scan.files.length === 1 ? "file changed" : "files changed"),
+        kpi(`+${count(adds)}`, "lines added", "add"),
+        kpi(`−${count(dels)}`, "lines removed", "del"),
+        scan.commits.length
+            ? kpi(count(scan.commits.length), scan.commits.length === 1 ? "commit" : "commits")
+            : "",
+        kpi(`${ste.score}%`, "STE sentences pass"),
+        `</div></div></header>`,
+        `<noscript><p class="run-note">This is a summary. Press Run for the interactive report: the architecture, the change map, the walkthrough, and the diffs.</p></noscript>`,
+        `<main class="wrap">`,
+    ];
+
+    if (story.areas?.length) {
+        parts.push(
+            `<section><div class="sec-head"><h2>Areas</h2></div><div class="risks">`,
+            ...story.areas.map(
+                (area) =>
+                    `<div class="card risk"><div class="lvl low">${e((area.kind ?? "area").slice(0, 8))}</div><div><p><b>${e(area.name)}</b></p><p>${e(area.summary)}</p></div></div>`,
+            ),
+            `</div></section>`,
+        );
+    }
+
+    if (story.risks?.length) {
+        parts.push(
+            `<section><div class="sec-head"><h2>Risks</h2></div><div class="risks">`,
+            ...story.risks.map((risk) => {
+                const level = String(risk.level).toLowerCase();
+                const shownLevel = ["high", "medium", "low"].includes(level) ? level : "low";
+
+                return `<div class="card risk"><div class="lvl ${shownLevel}">${e(shownLevel)}</div><div><p>${e(risk.text)}</p></div></div>`;
+            }),
+            `</div></section>`,
+        );
+    }
+
+    parts.push(
+        `<section><div class="sec-head"><h2>Files</h2></div><ul class="static-files card">`,
+        ...scan.files
+            .slice(0, STATIC_FILES)
+            .map(
+                (file) =>
+                    `<li><span class="st st-${file.status}">${sign[file.status] ?? "M"}</span><span class="add">+${count(file.additions)}</span><span class="del">−${count(file.deletions)}</span><span class="p">${e(file.path)}</span></li>`,
+            ),
+        scan.files.length > STATIC_FILES
+            ? `<li class="more">and ${count(scan.files.length - STATIC_FILES)} more</li>`
+            : "",
+        `</ul></section></main>`,
+    );
+
+    return parts.join("");
+}
+
 async function renderReport(scan: Scan, story: Narrative, ste: ReturnType<typeof checkSte>) {
     const folder = join(import.meta.dirname, "change-atlas");
     const [css, js] = await Promise.all([
@@ -1614,7 +1699,7 @@ async function renderReport(scan: Scan, story: Narrative, ste: ReturnType<typeof
 <style>${css}</style>
 </head>
 <body>
-<div id="app"><p class="boot">Loading the change atlas…</p></div>
+<div id="app">${staticReport(scan, story, ste)}</div>
 <script type="application/json" id="atlas-data">${safeJson(data)}</script>
 <script>${script}</script>
 </body>
@@ -1778,9 +1863,46 @@ async function writeReport(path: string, html: string) {
 const Ste = (description: string) => Type.String({ description: `${description} (ASD-STE100)` });
 const STATUS_HINT = "added, changed, removed, or unchanged";
 
+/** Where a report shows: `inline`, as a card in Pi's reply (`artifact_inline`); `viewer`, in the artifact viewer. */
+export type Display = "inline" | "viewer";
+
+const DISPLAYS: readonly Display[] = ["inline", "viewer"];
+
+/** The display that `/change-atlas-display` saved, or `inline` when none is saved or the file is not readable. */
+async function savedDisplay(file: string): Promise<Display> {
+    try {
+        const value = (JSON.parse(await readFile(file, "utf8")) as { display?: unknown }).display;
+
+        return DISPLAYS.includes(value as Display) ? (value as Display) : "inline";
+    } catch {
+        return "inline";
+    }
+}
+
+/** Whether a file can be opened through a held folder: Linux, where `/proc/self/fd` names open files. */
+const CAN_OPEN_IN_FOLDER = existsSync("/proc/self/fd");
+
+/**
+ * Whether this session can show a report as a card: it has `artifact_inline`, and that tool takes a path (this
+ * module's wrap adds one). A report is too large for Pi to send as content. PiP, which has no `artifact_inline`, and
+ * Pocket versions before it get the viewer.
+ */
+function inlineWithPath(agent: { tools?: readonly unknown[] }) {
+    // Only the tools that Pi is offered now: a deferred tool needs tool_search first, and the result says to call it.
+    const tools = (agent.tools ?? []) as {
+        name?: string;
+        parameters?: { properties?: Record<string, unknown> };
+    }[];
+    const tool = tools.find((each) => each.name === "artifact_inline");
+
+    // This module's wrap reads a report only where it can open it through the held folder (see readOwnReport).
+    return tool?.parameters?.properties?.path !== undefined && CAN_OPEN_IN_FOLDER;
+}
+
 export default function createChangeAtlas(host: Host, web: Web) {
     const outDir = join(host.dataDir, "change-atlas");
     const cacheRoot = join(outDir, "git");
+    const settingsFile = join(outDir, "settings.json");
 
     const repoFolder = async (
         api: { agent(context: unknown): Promise<{ cwd?: string }> },
@@ -1842,7 +1964,7 @@ export default function createChangeAtlas(host: Host, web: Web) {
         defineTool({
             name: "change_atlas_publish",
             description:
-                "Step 2 of a Change Atlas: builds the interactive HTML report (architecture diagram, change treemap, walkthrough, annotated diffs, risks) from a scan and your story. Write every text field in ASD-STE100: short sentences (25 words or fewer), active voice, no contractions or idioms. The result checks the STE and gives the file to publish with the artifact tool.",
+                "Step 2 of a Change Atlas: builds the interactive HTML report (architecture diagram, change treemap, walkthrough, annotated diffs, risks) from a scan and your story. Write every text field in ASD-STE100: short sentences (25 words or fewer), active voice, no contractions or idioms. The result checks the STE and says how to publish the file: as a card in your reply (artifact_inline) or in the artifact viewer (artifact), as the owner prefers.",
             parameters: Type.Object({
                 base: Type.String({ description: "base from change_atlas_scan" }),
                 head: Type.String({
@@ -1855,6 +1977,12 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 ),
                 repo: Type.Optional(
                     Type.String({ description: "The repository folder, as in the scan" }),
+                ),
+                display: Type.Optional(
+                    Type.Union([Type.Literal("inline"), Type.Literal("viewer")], {
+                        description:
+                            "Where the report shows: inline (a card in your reply) or viewer (the artifact viewer). Leave out to use the owner's preference; set it only when the person asks for one",
+                    }),
                 ),
                 title: Ste("A short title of the whole change"),
                 summary: Type.Array(Ste("One sentence"), {
@@ -2016,13 +2144,29 @@ export default function createChangeAtlas(host: Host, web: Web) {
                 // A report holds code from the repository, and it can hold a secret. Only the owner's user reads it.
                 await writeReport(path, html);
 
+                const wanted = args.display ?? (await savedDisplay(settingsFile));
+                // The report is written already: when the session cannot be read, it goes to the viewer.
+                const canInline = await api
+                    .agent(context)
+                    .then((agent) => inlineWithPath(agent as Parameters<typeof inlineWithPath>[0]))
+                    .catch(() => false);
+                const display: Display = wanted === "inline" && canInline ? "inline" : "viewer";
+                const id = `change-atlas-${slug.slice(0, 40).replace(/-+$/, "")}`;
+                const publish =
+                    display === "inline"
+                        ? `Publish it now: call artifact_inline directly (not inside codemode, so the card shows) with path "${path}", the title that you gave (60 characters at most), and id "${id}". The person presses Run on the card to open the report, or opens it in the viewer.`
+                        : `Publish it now: call artifact with path "${path}", the title that you gave (60 characters at most), and id "${id}".${
+                              wanted === "inline"
+                                  ? " (This session has no artifact_inline that takes a path, so the report goes to the viewer.)"
+                                  : ""
+                          }`;
                 const known = new Set(scan.files.map((file) => file.path));
                 const unknownNotes = (args.fileNotes ?? [])
                     .filter((note) => !known.has(note.path))
                     .map((note) => note.path);
                 const lines = [
                     `Wrote the Change Atlas: ${path} (${Math.round(html.length / 1024)} KB, ${scan.files.length} files).`,
-                    `Publish it now: call artifact with path "${path}", the title that you gave (60 characters at most), and id "change-atlas-${slug.slice(0, 40).replace(/-+$/, "")}".`,
+                    publish,
                     `STE check: ${ste.score}% of ${ste.sentences} sentences pass.`,
                 ];
 
@@ -2072,10 +2216,194 @@ export default function createChangeAtlas(host: Host, web: Web) {
         { annotations: { readOnlyHint: false } },
     );
 
+    // The owner's choice for every session: a card in the reply, or the viewer. Pi can still pick one for a call.
+    web.command("change-atlas-display", {
+        description: "Show or set where Change Atlas reports show: inline (a card) or viewer",
+        args: "[inline|viewer]",
+        scope: "global",
+        handler: async (args) => {
+            const choice = args.trim().toLowerCase();
+
+            if (choice === "") {
+                return {
+                    type: "toast",
+                    level: "info",
+                    message: `Change Atlas reports show ${
+                        (await savedDisplay(settingsFile)) === "inline"
+                            ? "inline, as a card in Pi's reply"
+                            : "in the artifact viewer"
+                    }.`,
+                };
+            }
+
+            if (!DISPLAYS.includes(choice as Display)) {
+                throw web.error(400, "Give inline or viewer.");
+            }
+
+            await writeReport(settingsFile, `${JSON.stringify({ display: choice })}\n`);
+
+            return {
+                type: "toast",
+                level: "info",
+                message:
+                    choice === "inline"
+                        ? "Change Atlas reports now show inline, as a card in Pi's reply."
+                        : "Change Atlas reports now show in the artifact viewer.",
+            };
+        },
+    });
+
     web.client("change-atlas", { access: "owner" });
 
     return defineExtension({
         name: "change-atlas",
         tools: [scanTool, publishTool],
+        wraps: [inlineReports(outDir)],
+    });
+}
+
+/** The most that `artifact_inline` stores in a version. */
+const MAX_REPORT = 2_000_000;
+
+/**
+ * Reads a report: an `.html` file right in `folder`, the module's data folder, where `change_atlas_publish` writes
+ * them (only the server's user can write there, so the module does not keep a list of what it wrote). The folder must be a real folder, and the file is opened without following a link. After the
+ * open, the file must still be the one in the folder's real path (a folder swapped for a link between the check and the
+ * open is caught), and it must have one name only (a hard link to a file elsewhere is refused; reports are written
+ * by a rename, so they have one). It reads at most one byte past the limit, also when the file grows.
+ */
+async function readOwnReport(folder: string, path: string) {
+    const file = resolve(folder, expandHome(path));
+    const refuse = () =>
+        new Error(
+            `The path must be a Change Atlas report: an .html file in ${shown(folder)}, where change_atlas_publish writes them.`,
+        );
+
+    if (dirname(file) !== folder || !file.endsWith(".html") || basename(file).startsWith(".")) {
+        throw refuse();
+    }
+
+    // The folder, held open, and the file opened through it (`/proc/self/fd/<dir>/<name>`, as openat does): a folder
+    // swapped for another one, or for a link, at any moment cannot lead the open elsewhere. Without /proc paths cannot
+    // promise that, so the wrap refuses there, and change_atlas_publish sends reports to the viewer.
+    if (!CAN_OPEN_IN_FOLDER) {
+        throw new Error(
+            "This server cannot open a file through a held folder (no /proc): publish the report with the artifact tool.",
+        );
+    }
+
+    const dir = await open(
+        folder,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    ).catch(() => {
+        throw new Error(`${shown(folder)} is not a folder (it can be a link).`);
+    });
+    let handle: Awaited<ReturnType<typeof open>>;
+
+    try {
+        handle = await open(
+            join(`/proc/self/fd/${dir.fd}`, basename(file)),
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+
+        const info = await handle.stat().catch(async (error) => {
+            await handle.close();
+
+            throw error;
+        });
+
+        if (!info.isFile() || info.nlink !== 1) {
+            await handle.close();
+
+            throw refuse();
+        }
+    } finally {
+        await dir.close();
+    }
+
+    try {
+        const buffer = Buffer.alloc(MAX_REPORT + 1);
+        let size = 0;
+
+        while (size < buffer.length) {
+            const { bytesRead } = await handle.read(buffer, size, buffer.length - size, null);
+
+            if (bytesRead === 0) {
+                break;
+            }
+
+            size += bytesRead;
+        }
+
+        if (size > MAX_REPORT) {
+            throw new Error(`The report is larger than ${MAX_REPORT} bytes, too large to publish.`);
+        }
+
+        return buffer.subarray(0, size).toString("utf8");
+    } finally {
+        await handle.close();
+    }
+}
+
+type InlineTool = Parameters<Parameters<typeof wrapTool>[1]>[0];
+
+/**
+ * Lets `artifact_inline` take the path of a Change Atlas report, which is too large for Pi to send as content: the
+ * page then shows as a card in the reply, as any `artifact_inline` page does. Only this module's own reports, so
+ * the wrap gives Pi no new way to read files. A Pocket whose `artifact_inline` already takes a path keeps its own.
+ */
+export function inlineReports(folder: string) {
+    return wrapTool({ name: "artifact_inline" } as InlineTool, (tool) => {
+        const parameters = tool.parameters as unknown as {
+            properties?: Record<string, unknown>;
+        };
+
+        if (parameters.properties === undefined || "path" in parameters.properties) {
+            return tool;
+        }
+
+        return {
+            ...tool,
+            description: `${tool.description} Or give path instead: a Change Atlas report that change_atlas_publish wrote.`,
+            parameters: {
+                ...tool.parameters,
+                properties: {
+                    ...parameters.properties,
+                    path: Type.Optional(
+                        Type.String({
+                            description:
+                                "The path of a Change Atlas report (an .html file) that change_atlas_publish wrote. Leave out content and edits.",
+                        }),
+                    ),
+                },
+            } as unknown as typeof tool.parameters,
+            execute: async (args, api, context) => {
+                const { path, ...rest } = args as { path?: string; content?: string; edits?: [] };
+
+                if (path === undefined) {
+                    return tool.execute(rest as never, api, context);
+                }
+
+                if (rest.content !== undefined || rest.edits !== undefined) {
+                    throw new Error("Give exactly one of content, nonempty edits, or path.");
+                }
+
+                let content: string;
+
+                try {
+                    content = await readOwnReport(folder, path);
+                } catch (error) {
+                    // A replay of a call that already published finds its version without the file, which can be gone
+                    // by now. Any other call without content stops in the tool's own check, before it writes anything.
+                    try {
+                        return await tool.execute(rest as never, api, context);
+                    } catch {
+                        throw error;
+                    }
+                }
+
+                return tool.execute({ ...rest, content } as never, api, context);
+            },
+        };
     });
 }
